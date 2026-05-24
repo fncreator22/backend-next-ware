@@ -7,6 +7,14 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
     RELOAD: bool = True
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
 
     # Database configs
     MONGODB_URL: str = "mongodb://localhost:27017"

@@ -1,10 +1,11 @@
 from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
 
 
 class UserSignup(BaseModel):
+    name: str = Field(..., min_length=2)
     email: EmailStr
     password: str = Field(..., min_length=8)
-    company_name: str = Field(..., min_length=2)
 
 
 class UserLogin(BaseModel):
@@ -12,7 +13,12 @@ class UserLogin(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
-    success: bool
-    access_token: str
-    token_type: str = "bearer"
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    role: str
+    warehouse_id: Optional[str] = None
+    tenant_id: str
+    avatar: str
+    status: str
