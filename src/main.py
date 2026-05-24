@@ -30,11 +30,15 @@ app = FastAPI(
 # Apply global CORS configurations
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in staging/production to specific frontend origins
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register global exception handlers
+from src.middleware.exceptions import register_exception_handlers
+register_exception_handlers(app)
 
 # Import and attach modular routers
 from src.modules.auth import auth_router
