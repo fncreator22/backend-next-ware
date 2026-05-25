@@ -1,1 +1,0 @@
-# Dynamic tables utilities placeholders
