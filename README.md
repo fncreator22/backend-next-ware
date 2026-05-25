@@ -168,3 +168,45 @@ To achieve sub-100ms local query executions, we register compound database index
 
 1. **Compound Index `[("warehouse_id", 1), ("sku", 1)]`**: Enforces strict SKU uniqueness within a single warehouse partition while speeding up transactional lookup speeds.
 2. **Compound Index `[("tenant_id", 1), ("warehouse_id", 1)]`**: Optimizes listings query speeds and scopes filtering limits instantly.
+
+---
+
+## 💰 Phase 6 — Billing Transactions & Atomic Stock Deductions
+
+Phase 6 implements a secure billing engine that guarantees database consistency during inventory transactions, snapping regional taxes at the exact millisecond of purchase.
+
+### 1. Invoicing & Stock Deduction Workflow
+
+```mermaid
+flowchart TD
+    A[Checkout Request] --> B{Replica Set Active?}
+    B -->|Yes| C[Open Multi-Document ACID Session]
+    B -->|No| D[Execute Sequential Fallback Block]
+    C --> E[Verify Cash Totals & Snapshot Regional Taxes]
+    D --> E
+    E --> F[Check Stock Sufficiency]
+    F -->|Insufficient| G[Abort ACID Session / Sequential Rollback]
+    F -->|Sufficient| H[Decrement Stock counts & Insert Invoice document]
+    H --> I[Commit ACID Transaction / Confirm Standalone Update]
+    I --> J[Paid Invoice Issued & Printed]
+```
+
+### 2. Standalone Fallback & ACID Transactions
+
+* **Staged ACID Transactions**: When running on production replica sets or MongoDB Atlas, the system utilizes MongoDB's native multi-document ACID transaction sessions (`start_session` and `start_transaction`).
+* **Manual Sequential Rollback Fallback**: On local standalone developer instances, the system automatically detects the lack of a replica set configuration and switches to sequential operations. If any stock overdraft or exception occurs mid-deduction, it sequentially restores the original catalog stock levels from local backups, avoiding database crashes.
+
+### 3. Financial Integrity & Double-Entry Math
+
+* **Pricings & Totals**: Evaluated entirely using Python's `decimal.Decimal` module on the backend to safeguard against client-side pricing manipulations.
+* **Storage Precision**: Financial fields (`subtotal`, `tax`, `total`, item snapshot `price`) are stored utilizing BSON `Decimal128` format.
+* **Immutable Records**: Once generated, invoice documents (`bills` collection) are historically immutable. Corrections are managed by issuing negative value Credit Notes referencing the original `bill_no`.
+
+### 4. Advanced Revenue Analytics
+
+Dashboard widgets are powered by high-performance aggregation pipelines under `/api/v1/billing/analytics/`:
+* **`GET /api/v1/billing/analytics/revenue`**: Computes gross revenue, tax collected, net revenue, and average invoice size.
+* **`GET /api/v1/billing/analytics/trends`**: Groups invoice volumes monthly for line charts.
+* **`GET /api/v1/billing/analytics/top-items`**: Aggregates bestselling inventory items.
+* **`GET /api/v1/billing/analytics/warehouse-performance`**: Scopes sales summaries grouped per warehouse name.
+
