@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 from fastapi import Depends
@@ -137,6 +138,18 @@ class ItemService:
             "timestamp": datetime.utcnow()
         })
 
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="inventory_change",
+                data=normalize_doc(created),
+                warehouse_id=wh_id
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for item creation: {e}")
+
         return created
 
     async def update_item(self, item_id: str, payload: ItemUpdate, current_user: dict) -> dict:
@@ -185,6 +198,18 @@ class ItemService:
             "timestamp": datetime.utcnow()
         })
 
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="inventory_change",
+                data=normalize_doc(updated),
+                warehouse_id=updated.get("warehouse_id")
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for item update: {e}")
+
         return updated
 
     async def delete_item(self, item_id: str, current_user: dict) -> bool:
@@ -217,6 +242,18 @@ class ItemService:
                 "warehouseId": item["warehouse_id"],
                 "timestamp": datetime.utcnow()
             })
+
+            # Trigger real-time broadcast fallback for standalone server configurations
+            try:
+                from src.modules.realtime import ws_manager
+                asyncio.create_task(ws_manager.broadcast_event(
+                    tenant_id=tenant_id,
+                    event_type="inventory_change",
+                    data={"id": item_id, "_id": item_id, "action": "delete"},
+                    warehouse_id=item["warehouse_id"]
+                ))
+            except Exception as e:
+                logger.debug(f"Manual WebSocket broadcast failed for item deletion: {e}")
 
         return deleted
 

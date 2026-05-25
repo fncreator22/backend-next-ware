@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 from fastapi import Depends
@@ -152,6 +153,18 @@ class BillingService:
                             "timestamp": datetime.utcnow()
                         }, session=session)
 
+                        # Trigger real-time broadcast fallback for standalone server configurations
+                        try:
+                            from src.modules.realtime import ws_manager, normalize_doc
+                            asyncio.create_task(ws_manager.broadcast_event(
+                                tenant_id=tenant_id,
+                                event_type="billing_completion",
+                                data=normalize_doc(created),
+                                warehouse_id=wh_id
+                            ))
+                        except Exception as e:
+                            logger.debug(f"Manual WebSocket broadcast failed for billing completion: {e}")
+
                         return created
                     except Exception as e:
                         logger.error(f"Transaction aborted. Rolling back changes. Reason: {e}")
@@ -235,6 +248,18 @@ class BillingService:
                     "warehouseId": wh_id,
                     "timestamp": datetime.utcnow()
                 })
+
+                # Trigger real-time broadcast fallback for standalone server configurations
+                try:
+                    from src.modules.realtime import ws_manager, normalize_doc
+                    asyncio.create_task(ws_manager.broadcast_event(
+                        tenant_id=tenant_id,
+                        event_type="billing_completion",
+                        data=normalize_doc(created),
+                        warehouse_id=wh_id
+                    ))
+                except Exception as e:
+                    logger.debug(f"Manual WebSocket broadcast failed for billing completion: {e}")
 
                 return created
 

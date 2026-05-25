@@ -41,7 +41,8 @@ try:
     # Show available routes in OpenAPI docs
     logger.info("Registered API Routes:")
     for route in app.routes:
-        logger.info(f"   -> {route.methods} {route.path}")
+        methods = getattr(route, "methods", {"WS"})
+        logger.info(f"   -> {methods} {route.path}")
         
     logger.info("🚀 Environment Sanity Check PASSED! All modules resolved cleanly.")
 except Exception as e:

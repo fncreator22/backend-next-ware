@@ -1,253 +1,189 @@
-# WareOps ERP — Asynchronous Enterprise Backend
+# NexWare ERP — Enterprise Multi-Tenant Monolith Monolith Backend
 
-This is the secure, modular, asynchronous enterprise SaaS backend for **WareOps ERP**, architected in **Python** using **FastAPI** and a **MongoDB-first** database strategy. It serves as a highly scalable Modular Monolith, designed with clean interfaces to allow individual modules to seamlessly split into microservices in the future.
-
----
-
-## 🚀 Key Architectural Priorities
-
-- **Modular Monolith**: Strict boundary isolation where modules have self-contained layers (routers, services, schemas, models, repositories) and are prohibited from querying other module collections directly.
-- **Tenant & Warehouse Isolation**: Automatic tenant scoping applied globally via FastAPI dependency injection guards on database query filters.
-- **MongoDB-First Database Strategy**: High-performance JSON-native document storage for core relational, dynamic tables, and audit trail events. Atomic operations across collections are handled via MongoDB Multi-Document ACID Transactions.
-- **Dynamic Table Builder**: An Airtable-like runtime column validation system. Columns, headers, and validation schemas live in a `table_schemas` collection, with dynamic rows saved in `table_rows` and validated on write via runtime Pydantic configurations.
-- **Enterprise-Grade Security**:
-  - **Argon2id Hashing**: configured with optimal parameters ($m=65536, t=3, p=4$) for password protection.
-  - **Token Rotation**: Short-lived HMAC-SHA256 JWT access tokens (15 mins) combined with httpOnly, secure, rotating refresh tokens (7 days) tracked in Redis/MongoDB.
-  - **Role-Based Access Control (RBAC)**: Enforced privilege hierarchy: `employee` (1) < `staff` (2) < `manager` (3) < `admin` (4) < `super_admin` (5).
-- **Double-Entry Financial Math**: All billing/invoice totals and calculations are executed via Python's `decimal.Decimal` module and stored in MongoDB's `Decimal128` format to eliminate floating-point math rounding issues.
+NexWare ERP is a high-performance, secure, and multi-tenant ERP platform backend designed as a modular monolith. It exposes a fully asynchronous FastAPI REST API integrated with MongoDB, WebSockets, rate limiting, centralized logs, heartbeat telemetry, and resilient standalone fallbacks.
 
 ---
 
-## 📂 Project Organization
+## 🏗️ Architectural Folder Topology
 
-The repository strictly preserves a scalable, modular design. Each module is fully encapsulated:
+The codebase is organized as a clean **Modular Monolith**, where each business domain is completely isolated under `src/modules/` with its own BSON database model, Pydantic schema mappings, Motor async repository layer, business service logic, and REST controllers:
 
 ```
 src/
-├── main.py                   # FastAPI Application Entry Point
-├── config.py                 # Pydantic BaseSettings Configuration Loader
-├── database.py               # Motor Asynchronous MongoDB Client & Session Registry
-├── middleware/               # CORS, Security Headers, Custom Logging
+├── config.py              # Central BaseSettings configuration singleton
+├── database.py            # MongoDB driver connections & index startup triggers
+├── main.py                # Core FastAPI instance, lifecycles, and global middlewares
+├── middleware/
+│   ├── exceptions.py      # Unified domain exception-to-JSON handlers
+│   ├── logging.py         # Centralized Request JSON Logger
+│   └── rate_limiter.py    # Sliding window request protection
+├── utils/
+│   └── cache.py           # CacheManager with automatic local fallback
 └── modules/
-    ├── auth/                 # Authentication, JWT handling, Argon2id
-    ├── warehouses/           # Warehouse registries
-    ├── items/                # Catalog item and SKU level management
-    ├── billing/              # Invoice compilation & credit note double-entry balance
-    ├── dynamic_tables/       # Custom Airtable-like table schemas & dynamic data rows
-    ├── workforce/            # Staff roles & privilege hierarchies
-    └── audit_logs/           # Secure, write-once user operation logging
+    ├── auth/              # JWT cookie sign-in & refresh rotation
+    ├── warehouses/        # multi-tenant location isolation boundaries
+    ├── workforce/         # RBAC member hierarchies
+    ├── items/             # Decimal128 catalog & category aggregations
+    ├── billing/           # Regional compliant invoicing & stock deductions
+    ├── dynamic_tables/    # Airtable-style dynamic runtime compiler
+    ├── audit_logs/        # Immutable compliance event trackers
+    ├── analytics/         # Dynamic financial aggregate dashboards
+    ├── realtime/          # Multi-tenant WebSocket registries
+    └── health/            # Probes covering DB, Cache, and Host loads
 ```
-
-Inside each module, boundaries are preserved across these layers:
-* `router.py`: API endpoint pathways and FastAPI dependencies.
-* `service.py`: Orchestration of business workflows.
-* `schema.py`: Pydantic models for validation of incoming and outgoing payloads.
-* `model.py`: Data type mapping representing MongoDB records.
-* `repository.py`: Motor asynchronous query operations.
-* `utils.py`: Specific module auxiliary helper tools.
 
 ---
 
-## 🚦 Router Endpoint Tree
+## ⚡ Real-Time WebSockets & Fallback Loop Architecture
 
-All endpoints reside under the `/api/v1` namespace and preserve the following routing:
+NexWare features a robust, multi-tenant scoped WebSocket gateway:
 
-| Module Route Prefix | Method | Endpoint Path | Authentication | Description |
-| :--- | :---: | :--- | :---: | :--- |
-| **`/api/v1/auth`** | POST | `/signup` | Public | Registers a new Super Admin tenant |
-| | POST | `/login` | Public | Authenticates and returns access & refresh tokens |
-| | POST | `/refresh` | httpOnly Cookie | Rotates and issues a new access/refresh token pair |
-| | POST | `/logout` | JWT | Invalidates the active session and tokens |
-| **`/api/v1/warehouses`** | GET | `/` | JWT | Lists active warehouses (scopes based on roles) |
-| | POST | `/` | JWT | Creates a new warehouse registry |
-| | GET | `/{id}` | JWT | Fetches a specific warehouse's detailed registry |
-| | PUT | `/{id}` | JWT | Modifies a warehouse profile |
-| | DELETE | `/{id}` | JWT | Cascade deletes a warehouse and all associated data |
-| **`/api/v1/items`** | GET | `/` | JWT | Fetches catalog items matching warehouse scope |
-| | POST | `/` | JWT | Registers new item (evaluates SKU uniqueness) |
-| | PUT | `/{id}` | JWT | Adjusts stock levels or specifications |
-| | DELETE | `/{id}` | JWT | Removes item from catalog |
-| **`/api/v1/billing`** | GET | `/` | JWT | Lists invoices under tenant (hierarchical view) |
-| | POST | `/` | JWT | Generates bill (triggers atomic stock deduction) |
-| | GET | `/{id}/print` | JWT | Streams invoice calculation PDF |
-| **`/api/v1/dynamic-tables`**| GET | `/` | JWT | Retrieves custom schemas registered for warehouse |
-| | POST | `/` | JWT | Creates a custom Airtable-like metadata schema |
-| | GET | `/{tableId}/rows` | JWT | Fetches rows matching schema (dynamic schema validated) |
-| | POST | `/{tableId}/rows`| JWT | Appends rows into document collection |
-| **`/api/v1/workforce`** | GET | `/` | JWT | Lists staff members matching scope constraints |
-| | POST | `/` | JWT | Creates new staff profile (cannot exceed caller privilege) |
-| | PUT | `/{id}` | JWT | Updates role assignment or workforce status |
-| **`/api/v1/audit-logs`** | GET | `/` | JWT | Pulls historical user action trail (write-once) |
+### 1. Multi-Tenant WebSocket Scoping
+* **Route**: `WS /api/v1/realtime/ws?token=<access_token>`
+* **Scoping Security**: Scopes client sockets inside a thread-locked connections registry:
+  ```python
+  active_connections[tenant_id][warehouse_id]: Set[WebSocket]
+  ```
+  JWT access tokens are decrypted during handshake query parameter validation. Sockets are separated strictly by `tenant_id`. Standard members only receive updates scoped to their designated `warehouse_id`, while Super Admins receive tenant-wide global event broadcasts.
+
+### 2. Replica Set & Standalone Database Fallback
+* **Replica Set Watch**: On database startup, background tasks attempt to spawn native MongoDB Change Streams (`watch()`) on core collections (`inventory_items`, `bills`, `audit_logs`, `users`).
+* **Standalone Degraded Loop**: If MongoDB is running in standalone mode (no replica set configured), change streams fail gracefully, and the system transitions seamlessly to a **Manual Pub-Sub Broker**. Mutation service layers (Billing payments, catalog edits, workforce updates) automatically broadcast events via the `WebSocketManager` on successful writes, ensuring real-time client updates continue to function flawlessly.
 
 ---
 
-## 🛠️ Developer Setup & Launch
+## 🚀 Caching Abstraction Layer
 
-1. **Virtual Environment Setup**:
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate   # Windows
-   source .venv/bin/activate # Unix/macOS
-   ```
-2. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Environment Setup**:
-   Copy `.env.example` to `.env` and adjust database variables.
-4. **Run Application**:
-   ```bash
-   uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
-   ```
-   Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) to access Swagger OpenAPI interactive documentation.
+The `CacheManager` class implements a transparent double-tier storage interface:
+* **Tier 1 (Redis)**: Connects to a distributed Redis instance. Tests connection integrity using a fast async `ping()` on startup.
+* **Tier 2 (In-Memory Fallback)**: If Redis is offline, not installed, or connection fails, the cache shifts automatically to thread-safe local dictionaries. Keys carry timestamp limits and are automatically purged during key lookups or writes to maintain constant memory boundaries.
 
 ---
 
-## 📦 Phase 5 — Scoped Item Catalog & Inventory Management
+## 🔒 Security, Rate Limiting & Observation Middlewares
 
-Phase 5 introduces a robust, enterprise-grade inventory system with warehouse-scoped partitioning, exact Decimal pricing math, and dashboard-optimized analytics pipelines.
+### 1. Request Protection Rate Limiting
+Intercepts all API requests and tracks request counts per client IP over sliding time windows (100 requests per minute by default).
+* Uses Redis increment pipelines if available.
+* Degrades gracefully to thread-safe local in-memory timestamp arrays.
+* Excludes WebSocket connections and health checkheartbeats from limits.
+* Returns `HTTP 429 Too Many Requests` on violation.
 
-### 1. Inventory Architecture
-
-The inventory module utilizes a clean repository-service pattern inside [src/modules/items/](file:///c:/Users/sr2ma/OneDrive/Documents/GitHub/backend-warehouse/src/modules/items/). The backend is mathematically secure: prices and stock values are tracked utilizing Python's `decimal.Decimal` module and stored in MongoDB's native high-precision `Decimal128` format. This prevents floating-point issues during billing allocations.
-
-### 2. Inventory Lifecycle Flow
-
-```mermaid
-stateDiagram-v2
-    [*] --> Draft: SKU Assigned
-    Draft --> Registered: create_item Validation
-    Registered --> OutOfStock: stock == 0
-    Registered --> LowStock: stock < 20
-    Registered --> HealthyStock: stock >= 50
-    LowStock --> HealthyStock: Restock Order
-    OutOfStock --> HealthyStock: Restock Order
-    HealthyStock --> LowStock: Sales Deductions
-    Registered --> Retired: delete_item Action
-    Retired --> [*]
+### 2. Centralized Structured Logging
+Interceptors write a clean, single-line JSON request record straight to standard output (`stdout`), ready to be ingested by fluentd, vector, or other centralized log collectors:
+```json
+{"timestamp": "2026-05-25T18:01:17Z", "client_ip": "127.0.0.1", "method": "POST", "path": "/api/v1/items/", "status_code": 201, "latency_ms": 14.83, "tenant_id": "tenant_a"}
 ```
-
-### 3. Warehouse-Scoped Isolation
-
-Tenant boundaries are enforced dynamically at the database repository query layer:
-* **Super Admin**: Has global visibility across all registered warehouses.
-* **Admin, Manager, Staff**: Query filters are strictly forced to their assigned `warehouse_id`. Staff have read-only access.
-* **Employee**: Read-only catalog visibility.
-
-SKU uniqueness is enforced per warehouse partition, allowing identical product SKUs to exist across different warehouses under the same tenant without catalog collision.
-
-### 4. Optimized Aggregation & Dashboard Pipelines
-
-The backend exposes four advanced analytics routes under `/api/v1/items/analytics/` specifically optimized for graphs, KPI cards, and smart AI restocking tables:
-
-```
-                  ┌──────────────────────────────┐
-                  │   FastAPI Analytics Router   │
-                  └──────────────┬───────────────┘
-                                 │
-         ┌───────────────────────┼───────────────────────┐
-         ▼                       ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│    /summary     │     │   /categories   │     │  /stock-status  │
-├─────────────────┤     ├─────────────────┤     ├─────────────────┤
-│ • Total Items   │     │ • Group by Cat  │     │ • Group by:     │
-│ • Total Stock   │     │ • Item count    │     │   - in_stock    │
-│ • Valuation     │     │ • Valuation     │     │   - low_stock   │
-│ • Low Stock     │     │                 │     │   - out_of_stock│
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-```
-
-* **`GET /api/v1/items/analytics/summary`**: Aggregates catalog totals, physical stock units, total dollar valuation, and low stock metrics.
-* **`GET /api/v1/items/analytics/categories`**: Groups inventory count and total valuation per category segment.
-* **`GET /api/v1/items/analytics/stock-status`**: Distributes stock counts into health buckets (`in_stock`, `low_stock`, `out_of_stock`).
-* **`GET /api/v1/items/analytics/trends`**: Aggregates monthly inventory creation volume.
-
-### 5. MongoDB Indexing & Performance Optimizations
-
-To achieve sub-100ms local query executions, we register compound database indexes on startup:
-
-1. **Compound Index `[("warehouse_id", 1), ("sku", 1)]`**: Enforces strict SKU uniqueness within a single warehouse partition while speeding up transactional lookup speeds.
-2. **Compound Index `[("tenant_id", 1), ("warehouse_id", 1)]`**: Optimizes listings query speeds and scopes filtering limits instantly.
 
 ---
 
-## 💰 Phase 6 — Billing Transactions & Atomic Stock Deductions
+## 📊 Unified Heartbeat Telemetry Probes
 
-Phase 6 implements a secure billing engine that guarantees database consistency during inventory transactions, snapping regional taxes at the exact millisecond of purchase.
-
-### 1. Invoicing & Stock Deduction Workflow
-
-```mermaid
-flowchart TD
-    A[Checkout Request] --> B{Replica Set Active?}
-    B -->|Yes| C[Open Multi-Document ACID Session]
-    B -->|No| D[Execute Sequential Fallback Block]
-    C --> E[Verify Cash Totals & Snapshot Regional Taxes]
-    D --> E
-    E --> F[Check Stock Sufficiency]
-    F -->|Insufficient| G[Abort ACID Session / Sequential Rollback]
-    F -->|Sufficient| H[Decrement Stock counts & Insert Invoice document]
-    H --> I[Commit ACID Transaction / Confirm Standalone Update]
-    I --> J[Paid Invoice Issued & Printed]
-```
-
-### 2. Standalone Fallback & ACID Transactions
-
-* **Staged ACID Transactions**: When running on production replica sets or MongoDB Atlas, the system utilizes MongoDB's native multi-document ACID transaction sessions (`start_session` and `start_transaction`).
-* **Manual Sequential Rollback Fallback**: On local standalone developer instances, the system automatically detects the lack of a replica set configuration and switches to sequential operations. If any stock overdraft or exception occurs mid-deduction, it sequentially restores the original catalog stock levels from local backups, avoiding database crashes.
-
-### 3. Financial Integrity & Double-Entry Math
-
-* **Pricings & Totals**: Evaluated entirely using Python's `decimal.Decimal` module on the backend to safeguard against client-side pricing manipulations.
-* **Storage Precision**: Financial fields (`subtotal`, `tax`, `total`, item snapshot `price`) are stored utilizing BSON `Decimal128` format.
-* **Immutable Records**: Once generated, invoice documents (`bills` collection) are historically immutable. Corrections are managed by issuing negative value Credit Notes referencing the original `bill_no`.
-
-### 4. Advanced Revenue Analytics
-
-Dashboard widgets are powered by high-performance aggregation pipelines under `/api/v1/billing/analytics/`:
-* **`GET /api/v1/billing/analytics/revenue`**: Computes gross revenue, tax collected, net revenue, and average invoice size.
-* **`GET /api/v1/billing/analytics/trends`**: Groups invoice volumes monthly for line charts.
-* **`GET /api/v1/billing/analytics/top-items`**: Aggregates bestselling inventory items.
-* **`GET /api/v1/billing/analytics/warehouse-performance`**: Scopes sales summaries grouped per warehouse name.
+Diagnostic probes are mounted directly under the root namespace to allow external service status monitors (UptimeRobot, Datadog) to verify nodes without JWT headers:
+* `GET /health` — Simple health heartbeat status.
+* `GET /health/db` — MongoDB driver connection verification.
+* `GET /health/cache` — Caching connection state.
+* `GET /health/system` — Windows physical memory and CPU diagnostics utilizing `ctypes` on Windows hosts.
 
 ---
 
-## 📋 Phase 7 — Dynamic Tables & Analytics Intelligence
+## 🏛️ Compliant Regional Billing & Transactions
 
-Phase 7 delivers a highly customizable, Airtable-style dynamic metadata schema builder, an enterprise-grade analytics engine, and a secure, role-scoped immutable audit logging system.
+* **Compliance Snapshotting**: Snapshots tax categories (`luxury` vs `normal`) per warehouse, preserving historical invoice records against future tax rate updates.
+* **ACID Deductions**: Inventory stock is decremented atomically inside an ACID transaction session context (`start_session()`).
+* **Standalone Manual Rollback Fallback**: On standalone MongoDB nodes, the system runs sequential item deductions. If a stock violation occurs mid-loop, a manual rollback loop is instantly executed to restore the exact original stock state, preventing inventory mismatch.
 
-### 1. Runtime Schema Validation Flow
+---
 
-```mermaid
-flowchart TD
-    A[Post /api/v1/dynamic-tables/:id/rows] --> B[Fetch Custom Schema Metadata]
-    B --> C[Extract Column Types & Required Settings]
-    C --> D[Compile Dynamic Pydantic Model at Runtime]
-    D --> E[Validate Payload via Compiled Model]
-    E -->|Validation Failure| F[Reject with detailed 400 Validation Error]
-    E -->|Structure Passes| G[Execute Custom Option Range Checks]
-    G -->|Dropdown/Status Mismatch| F
-    G -->|All Checks Pass| H[Flatten Object & Persist in MongoDB]
+## 💾 Enterprise Backup & Maintenance Utility
+
+A secure, standalone administration utility is available at the repository root to perform database maintenance without container shells:
+
+```powershell
+# 1. Back up database collections directly to backups/ folder
+.venv\Scripts\python.exe db_maintenance.py --action backup
+
+# 2. Restore database from the latest JSON backup inside backups/
+.venv\Scripts\python.exe db_maintenance.py --action restore
+
+# 3. Clean and reset all collections to a fresh seed state
+.venv\Scripts\python.exe db_maintenance.py --action reset
 ```
 
-### 2. Multi-Tenant Analytics & Scoping Boundaries
+---
 
-All custom table schemas and dynamically appended rows are strictly isolated under tenant partitions using compound query selectors. 
-* **Role-Based Schema Visibility**: Table schemas can declare restricted access `roles`. If not empty, only users with those roles (or system `admins` / `super_admins`) can fetch or append rows.
-* **Cascading Purge Safety**: Deleting a custom schema automatically executes a cascading delete, removing all associated row documents to prevent orphaned records.
+## 🚀 Bare-Metal VPS, Render, & Railway Production Deployment Guide
 
-### 3. High-Performance Analytics & Aggregations
+This guide details deploying the modular monolith backend in a non-containerized environment:
 
-The analytics engine uses MongoDB aggregation pipelines to compile real-time dashboard cards, KPI widgets, and trend visualizations:
-* **`GET /api/v1/analytics/dashboard`**: A unified, high-performance API compiling total revenues, total tax collected, physical stock units, active users count, low stock alarms, recent activity, recent invoices, and smart restock recommendations in a single round-trip database query.
-* **`GET /api/v1/analytics/revenue`**: Aggregates total billing, tax collections, average invoice values, and net margins.
-* **`GET /api/v1/analytics/inventory`**: Groups catalog total stocks and valuation per category segment.
-* **`GET /api/v1/analytics/workforce`**: Resolves active user allocations per role distributions.
-* **`GET /api/v1/analytics/trends`**: Evaluates month-by-month financial progress metrics over a rolling 12-month period.
+### Prerequisites
+* Python 3.12+ installed on host machine.
+* Active MongoDB Community Server (v8.0+) or MongoDB Atlas connection string.
+* (Optional) Local or Cloud Redis instance.
 
-### 4. Immutable Audit Logs & Role Scopes
+### Step 1: Environment Configuration
+Create a production `.env` file in the repository root matching the target configurations:
+```env
+HOST="0.0.0.0"
+PORT=8000
+RELOAD=false
+MONGODB_URL="mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority"
+DB_NAME="wareops_erp_production"
+JWT_SECRET="YOUR_HIGH_ENTROPY_CRYPTOGRAPHIC_JWT_SECRET_32_BYTES_MIN"
+REDIS_URL="redis://:<password>@redis-cloud-server:6379/0"
+```
 
-The `audit_logs` collection provides a read-only, tamper-proof record of system events. 
-* **Dynamic Role Scoping (Upward Reflection)**: Managers can see operational logs of staff members, and admins can see logs of managers. However, lower role levels are blocked from accessing logs of their superiors, safeguarding internal operations.
+### Step 2: Virtual Environment Setup & Dependency Installation
+```bash
+# 1. Clone backend repository to target server
+git clone <your-repo-url> backend-warehouse
+cd backend-warehouse
 
+# 2. Setup Python virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
+# 3. Install production dependencies
+pip install -r requirements.txt
+```
+
+### Step 3: Running via Production Process Manager (PM2 / Systemd)
+
+#### Option A: Deploying via Systemd (Bare-metal Linux VPS)
+Create a new service file `/etc/systemd/system/nexware-backend.service`:
+```ini
+[Unit]
+Description=NexWare ERP FastAPI Monolith Service
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/backend-warehouse
+ExecStart=/var/www/backend-warehouse/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
+Restart=always
+EnvironmentFile=/var/www/backend-warehouse/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+Start and enable the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start nexware-backend
+sudo systemctl enable nexware-backend
+```
+
+#### Option B: Deploying on Render or Railway
+To host the backend on Git-integrated cloud providers without containers:
+1. **Build Command**: `pip install -r requirements.txt`
+2. **Start Command**: `uvicorn src.main:app --host 0.0.0.0 --port $PORT`
+3. Configure target `.env` parameters inside the provider's Environmental variables dashboard.
+
+---
+
+## 🎯 Target Performance Metrics
+
+* **REST Endpoint Latency**: `< 100ms` (Sub-10ms for cached responses).
+* **WS Event Broadcast Latency**: `< 5ms`.
+* **Cache Read Latency**: `< 1ms` (Sub-0.1ms for InMemory fallback).
+* **Telemetry heartbeats**: `< 2ms`.
