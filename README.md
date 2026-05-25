@@ -250,4 +250,64 @@ The analytics engine uses MongoDB aggregation pipelines to compile real-time das
 The `audit_logs` collection provides a read-only, tamper-proof record of system events. 
 * **Dynamic Role Scoping (Upward Reflection)**: Managers can see operational logs of staff members, and admins can see logs of managers. However, lower role levels are blocked from accessing logs of their superiors, safeguarding internal operations.
 
+---
+
+## 💾 Database Maintenance & Safe Backup/Restore Utility
+
+To prevent accidental data loss and enforce platform integrity, we provide a structured, safe command-line database utility `db_maintenance.py` in the backend root folder:
+
+### 1. Generate Structured JSON Backup
+Safely exports all collections (`users`, `warehouses`, `sessions`, `audit_logs`, `inventory_items`, `bills`, `table_schemas`, `table_rows`) with correct BSON typing, ObjectId representations, Decimal128 values, and UTC datetime snapshots:
+```bash
+.venv\Scripts\python.exe db_maintenance.py backup --file backups/manual_backup.json
+```
+
+### 2. Restore Database from JSON Snapshot
+Safely drops and restores all operational collections to matching BSON structures:
+```bash
+.venv\Scripts\python.exe db_maintenance.py restore --file backups/manual_backup.json
+```
+
+### 3. Safe Database Reset
+Automatically generates a timestamped auto-backup first in the `backups/` directory before purging all collection data:
+```bash
+.venv\Scripts\python.exe db_maintenance.py reset
+```
+
+---
+
+## 🚦 Full Local Integration & Startup Guide
+
+To run the complete full-stack **NexWare ERP** locally with a live connection, execute the following steps in sequence:
+
+### Terminal 1: Asynchronous FastAPI Backend
+1. Navigate to the backend directory:
+   ```bash
+   cd C:\Users\sr2ma\OneDrive\Documents\GitHub\backend-warehouse
+   ```
+2. Activate virtual environment and launch Uvicorn:
+   ```bash
+   .venv\Scripts\activate
+   uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+   * *Backend starts up live at [http://127.0.0.1:8000](http://127.0.0.1:8000) with swagger docs at `/docs`.*
+
+### Terminal 2: Static Modern SPA Frontend
+1. Navigate to the frontend directory:
+   ```bash
+   cd "C:\Users\sr2ma\OneDrive\Documents\New folder\warehouse-erp"
+   ```
+2. Launch dev bundling compiler watch and serve standard web files:
+   ```bash
+   npm run dev
+   ```
+   * *Frontend launches live at [http://localhost:3000](http://localhost:3000) (using serve default).*
+
+### Terminal 3: MongoDB Verification
+1. To inspect loopback connectivity and ping replica set status:
+   ```bash
+   mongosh --eval "db.adminCommand('ping')"
+   ```
+
+
 
