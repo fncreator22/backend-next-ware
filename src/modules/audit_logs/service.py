@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from typing import List, Optional
 from fastapi import Depends
@@ -31,6 +32,19 @@ class AuditLogService:
             "timestamp": datetime.utcnow()
         }
         log = await self.repo.create_log(doc)
+        
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="audit_event",
+                data=normalize_doc(log),
+                warehouse_id=warehouse_id
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for audit log: {e}")
+            
         return log
 
     async def list_logs(self, current_user: dict, warehouse_filter: Optional[str] = None) -> List[dict]:

@@ -1,0 +1,210 @@
+{
+  "users": [
+    {
+      "_id": {
+        "$oid": "65dfa213e4b01a1c9ef00001"
+      },
+      "name": "Alex Morgan",
+      "email": "alex@wareops.io",
+      "role": "super_admin",
+      "warehouse_id": null,
+      "tenant_id": "tenant_alpha_001",
+      "status": "active"
+    },
+    {
+      "_id": {
+        "$oid": "65dfa213e4b01a1c9ef00002"
+      },
+      "name": "Jordan Lee",
+      "email": "jordan@wareops.io",
+      "role": "admin",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "status": "active"
+    },
+    {
+      "_id": {
+        "$oid": "65dfa213e4b01a1c9ef00003"
+      },
+      "name": "Sam Rivera",
+      "email": "sam@wareops.io",
+      "role": "staff",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "status": "active"
+    },
+    {
+      "_id": {
+        "$oid": "65dfa213e4b01a1c9ef00004"
+      },
+      "name": "Chris Patel",
+      "email": "chris@wareops.io",
+      "role": "employee",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "status": "active"
+    },
+    {
+      "_id": {
+        "$oid": "65dfa213e4b01a1c9ef00005"
+      },
+      "name": "Tenant B Admin",
+      "email": "beta@wareops.io",
+      "role": "admin",
+      "warehouse_id": "wh_austin_002",
+      "tenant_id": "tenant_beta_002",
+      "status": "active"
+    }
+  ],
+  "warehouses": [],
+  "sessions": [],
+  "audit_logs": [
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5da"
+      },
+      "user_id": "65dfa213e4b01a1c9ef00001",
+      "user_name": "Alex Morgan",
+      "action": "table_schema_create",
+      "description": "Created custom table schema: Operations Tracker (Scope: wh_chicago_001)",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "timestamp": {
+        "$date": "2026-05-25T17:43:56.301000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5dc"
+      },
+      "user_id": "65dfa213e4b01a1c9ef00003",
+      "user_name": "Sam Rivera",
+      "action": "table_row_create",
+      "description": "Appended row into table 'Operations Tracker'",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "timestamp": {
+        "$date": "2026-05-25T17:43:56.313000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5e4"
+      },
+      "user_id": "65dfa213e4b01a1c9ef00002",
+      "user_name": "Jordan Lee",
+      "action": "table_schema_delete",
+      "description": "Deleted custom table schema: Operations Tracker (Purged 1 rows)",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "timestamp": {
+        "$date": "2026-05-25T17:43:56.387000"
+      }
+    }
+  ],
+  "inventory_items": [
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5dd"
+      },
+      "category": "Electronics",
+      "stock": 45,
+      "price": 999.0,
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "sku": "SKU-01"
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5de"
+      },
+      "category": "Electronics",
+      "stock": 150,
+      "price": 49.0,
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "sku": "SKU-02"
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5df"
+      },
+      "category": "Furniture",
+      "stock": 20,
+      "price": 399.0,
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "sku": "SKU-03"
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5e0"
+      },
+      "category": "Tools",
+      "stock": 10,
+      "price": 25.0,
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "sku": "SKU-04"
+    }
+  ],
+  "bills": [
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5e1"
+      },
+      "bill_no": "INV-0001",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "total": 3446.55,
+      "tax": 449.55,
+      "created_at": {
+        "$date": "2026-05-25T17:43:56.343000"
+      },
+      "customer": "Acme Corp",
+      "items": [
+        {
+          "item_id": "SKU-01",
+          "qty": 3
+        }
+      ]
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5e2"
+      },
+      "bill_no": "INV-0002",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "total": 514.5,
+      "tax": 24.5,
+      "created_at": {
+        "$date": "2026-05-25T17:43:56.343000"
+      },
+      "customer": "Beta LLC",
+      "items": [
+        {
+          "item_id": "SKU-02",
+          "qty": 10
+        }
+      ]
+    },
+    {
+      "_id": {
+        "$oid": "6a148a5c1525421e66b4d5e3"
+      },
+      "bill_no": "INV-0003",
+      "warehouse_id": "wh_chicago_001",
+      "tenant_id": "tenant_alpha_001",
+      "total": 1569.75,
+      "tax": 74.75,
+      "created_at": {
+        "$date": "2026-04-10T17:43:56.343000"
+      },
+      "customer": "Gamma Inc",
+      "items": []
+    }
+  ],
+  "table_schemas": [],
+  "table_rows": []
+}

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, List
 from decimal import Decimal
 from datetime import datetime
@@ -65,6 +65,25 @@ class ItemResponse(BaseModel):
     created_by: str = Field(..., alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_id_fields(cls, data: any) -> any:
+        if isinstance(data, dict):
+            if "id" not in data and "_id" in data:
+                data["id"] = str(data["_id"])
+            # Ensure safe fallback mapping for camelCase fields in dictionaries
+            if "taxCategory" not in data and "tax_category" in data:
+                data["taxCategory"] = data["tax_category"]
+            if "warehouseId" not in data and "warehouse_id" in data:
+                data["warehouseId"] = data["warehouse_id"]
+            if "createdBy" not in data and "created_by" in data:
+                data["createdBy"] = data["created_by"]
+            if "createdAt" not in data and "created_at" in data:
+                data["createdAt"] = data["created_at"]
+            if "updatedAt" not in data and "updated_at" in data:
+                data["updatedAt"] = data["updated_at"]
+        return data
 
     model_config = ConfigDict(
         populate_by_name=True,

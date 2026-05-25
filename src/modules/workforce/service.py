@@ -103,6 +103,19 @@ class WorkforceService:
             "timestamp": datetime.utcnow()
         })
 
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            import asyncio
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=current_user["tenant_id"],
+                event_type="workforce_activity",
+                data=normalize_doc(created),
+                warehouse_id=payload.warehouse_id
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for workforce creation: {e}")
+
         return created
 
     async def update_workforce_member(self, member_id: str, payload: UserUpdate, current_user: dict) -> dict:
@@ -161,6 +174,19 @@ class WorkforceService:
             "timestamp": datetime.utcnow()
         })
 
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            import asyncio
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="workforce_activity",
+                data=normalize_doc(updated),
+                warehouse_id=target.get("warehouse_id")
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for workforce update: {e}")
+
         return updated
 
     async def delete_workforce_member(self, member_id: str, current_user: dict) -> None:
@@ -198,3 +224,16 @@ class WorkforceService:
             "warehouseId": target.get("warehouse_id"),
             "timestamp": datetime.utcnow()
         })
+
+        # Trigger real-time broadcast fallback for standalone server configurations
+        try:
+            from src.modules.realtime import ws_manager
+            import asyncio
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="workforce_activity",
+                data={"id": member_id, "_id": member_id, "action": "delete"},
+                warehouse_id=target.get("warehouse_id")
+            ))
+        except Exception as e:
+            logger.debug(f"Manual WebSocket broadcast failed for workforce deletion: {e}")
