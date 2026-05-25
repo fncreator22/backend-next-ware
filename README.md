@@ -100,3 +100,71 @@ All endpoints reside under the `/api/v1` namespace and preserve the following ro
    uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
    ```
    Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) to access Swagger OpenAPI interactive documentation.
+
+---
+
+## 📦 Phase 5 — Scoped Item Catalog & Inventory Management
+
+Phase 5 introduces a robust, enterprise-grade inventory system with warehouse-scoped partitioning, exact Decimal pricing math, and dashboard-optimized analytics pipelines.
+
+### 1. Inventory Architecture
+
+The inventory module utilizes a clean repository-service pattern inside [src/modules/items/](file:///c:/Users/sr2ma/OneDrive/Documents/GitHub/backend-warehouse/src/modules/items/). The backend is mathematically secure: prices and stock values are tracked utilizing Python's `decimal.Decimal` module and stored in MongoDB's native high-precision `Decimal128` format. This prevents floating-point issues during billing allocations.
+
+### 2. Inventory Lifecycle Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft: SKU Assigned
+    Draft --> Registered: create_item Validation
+    Registered --> OutOfStock: stock == 0
+    Registered --> LowStock: stock < 20
+    Registered --> HealthyStock: stock >= 50
+    LowStock --> HealthyStock: Restock Order
+    OutOfStock --> HealthyStock: Restock Order
+    HealthyStock --> LowStock: Sales Deductions
+    Registered --> Retired: delete_item Action
+    Retired --> [*]
+```
+
+### 3. Warehouse-Scoped Isolation
+
+Tenant boundaries are enforced dynamically at the database repository query layer:
+* **Super Admin**: Has global visibility across all registered warehouses.
+* **Admin, Manager, Staff**: Query filters are strictly forced to their assigned `warehouse_id`. Staff have read-only access.
+* **Employee**: Read-only catalog visibility.
+
+SKU uniqueness is enforced per warehouse partition, allowing identical product SKUs to exist across different warehouses under the same tenant without catalog collision.
+
+### 4. Optimized Aggregation & Dashboard Pipelines
+
+The backend exposes four advanced analytics routes under `/api/v1/items/analytics/` specifically optimized for graphs, KPI cards, and smart AI restocking tables:
+
+```
+                  ┌──────────────────────────────┐
+                  │   FastAPI Analytics Router   │
+                  └──────────────┬───────────────┘
+                                 │
+         ┌───────────────────────┼───────────────────────┐
+         ▼                       ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    /summary     │     │   /categories   │     │  /stock-status  │
+├─────────────────┤     ├─────────────────┤     ├─────────────────┤
+│ • Total Items   │     │ • Group by Cat  │     │ • Group by:     │
+│ • Total Stock   │     │ • Item count    │     │   - in_stock    │
+│ • Valuation     │     │ • Valuation     │     │   - low_stock   │
+│ • Low Stock     │     │                 │     │   - out_of_stock│
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+* **`GET /api/v1/items/analytics/summary`**: Aggregates catalog totals, physical stock units, total dollar valuation, and low stock metrics.
+* **`GET /api/v1/items/analytics/categories`**: Groups inventory count and total valuation per category segment.
+* **`GET /api/v1/items/analytics/stock-status`**: Distributes stock counts into health buckets (`in_stock`, `low_stock`, `out_of_stock`).
+* **`GET /api/v1/items/analytics/trends`**: Aggregates monthly inventory creation volume.
+
+### 5. MongoDB Indexing & Performance Optimizations
+
+To achieve sub-100ms local query executions, we register compound database indexes on startup:
+
+1. **Compound Index `[("warehouse_id", 1), ("sku", 1)]`**: Enforces strict SKU uniqueness within a single warehouse partition while speeding up transactional lookup speeds.
+2. **Compound Index `[("tenant_id", 1), ("warehouse_id", 1)]`**: Optimizes listings query speeds and scopes filtering limits instantly.
