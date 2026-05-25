@@ -100,3 +100,154 @@ All endpoints reside under the `/api/v1` namespace and preserve the following ro
    uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
    ```
    Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) to access Swagger OpenAPI interactive documentation.
+
+---
+
+## 📦 Phase 5 — Scoped Item Catalog & Inventory Management
+
+Phase 5 introduces a robust, enterprise-grade inventory system with warehouse-scoped partitioning, exact Decimal pricing math, and dashboard-optimized analytics pipelines.
+
+### 1. Inventory Architecture
+
+The inventory module utilizes a clean repository-service pattern inside [src/modules/items/](file:///c:/Users/sr2ma/OneDrive/Documents/GitHub/backend-warehouse/src/modules/items/). The backend is mathematically secure: prices and stock values are tracked utilizing Python's `decimal.Decimal` module and stored in MongoDB's native high-precision `Decimal128` format. This prevents floating-point issues during billing allocations.
+
+### 2. Inventory Lifecycle Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft: SKU Assigned
+    Draft --> Registered: create_item Validation
+    Registered --> OutOfStock: stock == 0
+    Registered --> LowStock: stock < 20
+    Registered --> HealthyStock: stock >= 50
+    LowStock --> HealthyStock: Restock Order
+    OutOfStock --> HealthyStock: Restock Order
+    HealthyStock --> LowStock: Sales Deductions
+    Registered --> Retired: delete_item Action
+    Retired --> [*]
+```
+
+### 3. Warehouse-Scoped Isolation
+
+Tenant boundaries are enforced dynamically at the database repository query layer:
+* **Super Admin**: Has global visibility across all registered warehouses.
+* **Admin, Manager, Staff**: Query filters are strictly forced to their assigned `warehouse_id`. Staff have read-only access.
+* **Employee**: Read-only catalog visibility.
+
+SKU uniqueness is enforced per warehouse partition, allowing identical product SKUs to exist across different warehouses under the same tenant without catalog collision.
+
+### 4. Optimized Aggregation & Dashboard Pipelines
+
+The backend exposes four advanced analytics routes under `/api/v1/items/analytics/` specifically optimized for graphs, KPI cards, and smart AI restocking tables:
+
+```
+                  ┌──────────────────────────────┐
+                  │   FastAPI Analytics Router   │
+                  └──────────────┬───────────────┘
+                                 │
+         ┌───────────────────────┼───────────────────────┐
+         ▼                       ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    /summary     │     │   /categories   │     │  /stock-status  │
+├─────────────────┤     ├─────────────────┤     ├─────────────────┤
+│ • Total Items   │     │ • Group by Cat  │     │ • Group by:     │
+│ • Total Stock   │     │ • Item count    │     │   - in_stock    │
+│ • Valuation     │     │ • Valuation     │     │   - low_stock   │
+│ • Low Stock     │     │                 │     │   - out_of_stock│
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+* **`GET /api/v1/items/analytics/summary`**: Aggregates catalog totals, physical stock units, total dollar valuation, and low stock metrics.
+* **`GET /api/v1/items/analytics/categories`**: Groups inventory count and total valuation per category segment.
+* **`GET /api/v1/items/analytics/stock-status`**: Distributes stock counts into health buckets (`in_stock`, `low_stock`, `out_of_stock`).
+* **`GET /api/v1/items/analytics/trends`**: Aggregates monthly inventory creation volume.
+
+### 5. MongoDB Indexing & Performance Optimizations
+
+To achieve sub-100ms local query executions, we register compound database indexes on startup:
+
+1. **Compound Index `[("warehouse_id", 1), ("sku", 1)]`**: Enforces strict SKU uniqueness within a single warehouse partition while speeding up transactional lookup speeds.
+2. **Compound Index `[("tenant_id", 1), ("warehouse_id", 1)]`**: Optimizes listings query speeds and scopes filtering limits instantly.
+
+---
+
+## 💰 Phase 6 — Billing Transactions & Atomic Stock Deductions
+
+Phase 6 implements a secure billing engine that guarantees database consistency during inventory transactions, snapping regional taxes at the exact millisecond of purchase.
+
+### 1. Invoicing & Stock Deduction Workflow
+
+```mermaid
+flowchart TD
+    A[Checkout Request] --> B{Replica Set Active?}
+    B -->|Yes| C[Open Multi-Document ACID Session]
+    B -->|No| D[Execute Sequential Fallback Block]
+    C --> E[Verify Cash Totals & Snapshot Regional Taxes]
+    D --> E
+    E --> F[Check Stock Sufficiency]
+    F -->|Insufficient| G[Abort ACID Session / Sequential Rollback]
+    F -->|Sufficient| H[Decrement Stock counts & Insert Invoice document]
+    H --> I[Commit ACID Transaction / Confirm Standalone Update]
+    I --> J[Paid Invoice Issued & Printed]
+```
+
+### 2. Standalone Fallback & ACID Transactions
+
+* **Staged ACID Transactions**: When running on production replica sets or MongoDB Atlas, the system utilizes MongoDB's native multi-document ACID transaction sessions (`start_session` and `start_transaction`).
+* **Manual Sequential Rollback Fallback**: On local standalone developer instances, the system automatically detects the lack of a replica set configuration and switches to sequential operations. If any stock overdraft or exception occurs mid-deduction, it sequentially restores the original catalog stock levels from local backups, avoiding database crashes.
+
+### 3. Financial Integrity & Double-Entry Math
+
+* **Pricings & Totals**: Evaluated entirely using Python's `decimal.Decimal` module on the backend to safeguard against client-side pricing manipulations.
+* **Storage Precision**: Financial fields (`subtotal`, `tax`, `total`, item snapshot `price`) are stored utilizing BSON `Decimal128` format.
+* **Immutable Records**: Once generated, invoice documents (`bills` collection) are historically immutable. Corrections are managed by issuing negative value Credit Notes referencing the original `bill_no`.
+
+### 4. Advanced Revenue Analytics
+
+Dashboard widgets are powered by high-performance aggregation pipelines under `/api/v1/billing/analytics/`:
+* **`GET /api/v1/billing/analytics/revenue`**: Computes gross revenue, tax collected, net revenue, and average invoice size.
+* **`GET /api/v1/billing/analytics/trends`**: Groups invoice volumes monthly for line charts.
+* **`GET /api/v1/billing/analytics/top-items`**: Aggregates bestselling inventory items.
+* **`GET /api/v1/billing/analytics/warehouse-performance`**: Scopes sales summaries grouped per warehouse name.
+
+---
+
+## 📋 Phase 7 — Dynamic Tables & Analytics Intelligence
+
+Phase 7 delivers a highly customizable, Airtable-style dynamic metadata schema builder, an enterprise-grade analytics engine, and a secure, role-scoped immutable audit logging system.
+
+### 1. Runtime Schema Validation Flow
+
+```mermaid
+flowchart TD
+    A[Post /api/v1/dynamic-tables/:id/rows] --> B[Fetch Custom Schema Metadata]
+    B --> C[Extract Column Types & Required Settings]
+    C --> D[Compile Dynamic Pydantic Model at Runtime]
+    D --> E[Validate Payload via Compiled Model]
+    E -->|Validation Failure| F[Reject with detailed 400 Validation Error]
+    E -->|Structure Passes| G[Execute Custom Option Range Checks]
+    G -->|Dropdown/Status Mismatch| F
+    G -->|All Checks Pass| H[Flatten Object & Persist in MongoDB]
+```
+
+### 2. Multi-Tenant Analytics & Scoping Boundaries
+
+All custom table schemas and dynamically appended rows are strictly isolated under tenant partitions using compound query selectors. 
+* **Role-Based Schema Visibility**: Table schemas can declare restricted access `roles`. If not empty, only users with those roles (or system `admins` / `super_admins`) can fetch or append rows.
+* **Cascading Purge Safety**: Deleting a custom schema automatically executes a cascading delete, removing all associated row documents to prevent orphaned records.
+
+### 3. High-Performance Analytics & Aggregations
+
+The analytics engine uses MongoDB aggregation pipelines to compile real-time dashboard cards, KPI widgets, and trend visualizations:
+* **`GET /api/v1/analytics/dashboard`**: A unified, high-performance API compiling total revenues, total tax collected, physical stock units, active users count, low stock alarms, recent activity, recent invoices, and smart restock recommendations in a single round-trip database query.
+* **`GET /api/v1/analytics/revenue`**: Aggregates total billing, tax collections, average invoice values, and net margins.
+* **`GET /api/v1/analytics/inventory`**: Groups catalog total stocks and valuation per category segment.
+* **`GET /api/v1/analytics/workforce`**: Resolves active user allocations per role distributions.
+* **`GET /api/v1/analytics/trends`**: Evaluates month-by-month financial progress metrics over a rolling 12-month period.
+
+### 4. Immutable Audit Logs & Role Scopes
+
+The `audit_logs` collection provides a read-only, tamper-proof record of system events. 
+* **Dynamic Role Scoping (Upward Reflection)**: Managers can see operational logs of staff members, and admins can see logs of managers. However, lower role levels are blocked from accessing logs of their superiors, safeguarding internal operations.
+
+

@@ -21,6 +21,7 @@ class TaxConfigSnapshot(BaseModel):
 class InvoiceDocument(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     bill_no: str
+    customer: str
     warehouse_id: str
     tenant_id: str
     items: List[InvoiceItemSnapshot]
@@ -28,4 +29,9 @@ class InvoiceDocument(BaseModel):
     tax: Decimal
     total: Decimal
     tax_config_snapshot: TaxConfigSnapshot
+    created_by: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True

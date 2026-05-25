@@ -1,13 +1,25 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
+from decimal import Decimal
+from bson.decimal128 import Decimal128
 
 
 class ItemDocument(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     sku: str
     name: str
-    quantity: int
+    category: str
+    price: Decimal
+    stock: int
+    unit: str = "pcs"
+    tax_category: str = "normal"  # "normal" or "luxury"
     warehouse_id: str
     tenant_id: str
+    created_by: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
