@@ -77,38 +77,30 @@ Interceptors write a clean, single-line JSON request record straight to standard
 
 ---
 
-## 📊 Unified Heartbeat Telemetry Probes
+## 💾 Zero-Data Vanilla Reset & Maintenance Utility
 
-Diagnostic probes are mounted directly under the root namespace to allow external service status monitors (UptimeRobot, Datadog) to verify nodes without JWT headers:
-* `GET /health` — Simple health heartbeat status.
-* `GET /health/db` — MongoDB driver connection verification.
-* `GET /health/cache` — Caching connection state.
-* `GET /health/system` — Windows physical memory and CPU diagnostics utilizing `ctypes` on Windows hosts.
+NexWare ERP is configured as a completely clean, **zero-data vanilla enterprise starter system** out of the box. All seed users, warehouses, invoices, inventory items, and dynamic tables have been stripped from both the MongoDB database and the plain-JS SPA store.
 
----
+### First-Time Initialization Workflow
+1. **Launch Database & Caching**: Start MongoDB and Redis (or let it degrade gracefully to thread-safe in-memory cache fallbacks).
+2. **First-Time Signup**: Access the web SPA. Since there are no pre-seeded users in the vanilla starter state, you will be redirected to the signup page. Register your **Super Admin** tenant account.
+3. **Primary Warehouse Creation**: After signup, you will be prompted to register your primary warehouse. Creating this primary warehouse instantly initializes your empty multi-tenant scoped environment.
+4. **Resilient Empty States**: The dashboard, inventory list, invoicing ledger, and Airtable-style dynamic tables render cleanly with beautiful visual empty notifications without a single JS console error.
 
-## 🏛️ Compliant Regional Billing & Transactions
-
-* **Compliance Snapshotting**: Snapshots tax categories (`luxury` vs `normal`) per warehouse, preserving historical invoice records against future tax rate updates.
-* **ACID Deductions**: Inventory stock is decremented atomically inside an ACID transaction session context (`start_session()`).
-* **Standalone Manual Rollback Fallback**: On standalone MongoDB nodes, the system runs sequential item deductions. If a stock violation occurs mid-loop, a manual rollback loop is instantly executed to restore the exact original stock state, preventing inventory mismatch.
-
----
-
-## 💾 Enterprise Backup & Maintenance Utility
-
-A secure, standalone administration utility is available at the repository root to perform database maintenance without container shells:
+### Standalone DB Maintenance & Backup CLI Utility
+A secure, standalone administration utility is available at the repository root to perform database maintenance and backups:
 
 ```powershell
-# 1. Back up database collections directly to backups/ folder
-.venv\Scripts\python.exe db_maintenance.py --action backup
+# 1. Back up database collections directly to backups/ JSON format (retaining ObjectIds & Decimal128)
+.venv\Scripts\python.exe db_maintenance.py backup --file backups/my_backup.json
 
-# 2. Restore database from the latest JSON backup inside backups/
-.venv\Scripts\python.exe db_maintenance.py --action restore
+# 2. Safely restore database from a JSON backup (retaining indexes and compound unique constraints)
+.venv\Scripts\python.exe db_maintenance.py restore --file backups/my_backup.json
 
-# 3. Clean and reset all collections to a fresh seed state
-.venv\Scripts\python.exe db_maintenance.py --action reset
+# 3. Clean and reset all database collections to a pristine clean vanilla state
+.venv\Scripts\python.exe db_maintenance.py reset
 ```
+
 
 ---
 
