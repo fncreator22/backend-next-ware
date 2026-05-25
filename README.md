@@ -210,3 +210,44 @@ Dashboard widgets are powered by high-performance aggregation pipelines under `/
 * **`GET /api/v1/billing/analytics/top-items`**: Aggregates bestselling inventory items.
 * **`GET /api/v1/billing/analytics/warehouse-performance`**: Scopes sales summaries grouped per warehouse name.
 
+---
+
+## 📋 Phase 7 — Dynamic Tables & Analytics Intelligence
+
+Phase 7 delivers a highly customizable, Airtable-style dynamic metadata schema builder, an enterprise-grade analytics engine, and a secure, role-scoped immutable audit logging system.
+
+### 1. Runtime Schema Validation Flow
+
+```mermaid
+flowchart TD
+    A[Post /api/v1/dynamic-tables/:id/rows] --> B[Fetch Custom Schema Metadata]
+    B --> C[Extract Column Types & Required Settings]
+    C --> D[Compile Dynamic Pydantic Model at Runtime]
+    D --> E[Validate Payload via Compiled Model]
+    E -->|Validation Failure| F[Reject with detailed 400 Validation Error]
+    E -->|Structure Passes| G[Execute Custom Option Range Checks]
+    G -->|Dropdown/Status Mismatch| F
+    G -->|All Checks Pass| H[Flatten Object & Persist in MongoDB]
+```
+
+### 2. Multi-Tenant Analytics & Scoping Boundaries
+
+All custom table schemas and dynamically appended rows are strictly isolated under tenant partitions using compound query selectors. 
+* **Role-Based Schema Visibility**: Table schemas can declare restricted access `roles`. If not empty, only users with those roles (or system `admins` / `super_admins`) can fetch or append rows.
+* **Cascading Purge Safety**: Deleting a custom schema automatically executes a cascading delete, removing all associated row documents to prevent orphaned records.
+
+### 3. High-Performance Analytics & Aggregations
+
+The analytics engine uses MongoDB aggregation pipelines to compile real-time dashboard cards, KPI widgets, and trend visualizations:
+* **`GET /api/v1/analytics/dashboard`**: A unified, high-performance API compiling total revenues, total tax collected, physical stock units, active users count, low stock alarms, recent activity, recent invoices, and smart restock recommendations in a single round-trip database query.
+* **`GET /api/v1/analytics/revenue`**: Aggregates total billing, tax collections, average invoice values, and net margins.
+* **`GET /api/v1/analytics/inventory`**: Groups catalog total stocks and valuation per category segment.
+* **`GET /api/v1/analytics/workforce`**: Resolves active user allocations per role distributions.
+* **`GET /api/v1/analytics/trends`**: Evaluates month-by-month financial progress metrics over a rolling 12-month period.
+
+### 4. Immutable Audit Logs & Role Scopes
+
+The `audit_logs` collection provides a read-only, tamper-proof record of system events. 
+* **Dynamic Role Scoping (Upward Reflection)**: Managers can see operational logs of staff members, and admins can see logs of managers. However, lower role levels are blocked from accessing logs of their superiors, safeguarding internal operations.
+
+

@@ -48,6 +48,7 @@ from src.modules.billing import billing_router
 from src.modules.dynamic_tables import dynamic_tables_router
 from src.modules.workforce import workforce_router
 from src.modules.audit_logs import audit_logs_router
+from src.modules.analytics import analytics_router
 
 # Modular prefix registration under namespace /api/v1
 app.include_router(auth_router, prefix="/api/v1")
@@ -57,6 +58,7 @@ app.include_router(billing_router, prefix="/api/v1")
 app.include_router(dynamic_tables_router, prefix="/api/v1")
 app.include_router(workforce_router, prefix="/api/v1")
 app.include_router(audit_logs_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Health Check"])
