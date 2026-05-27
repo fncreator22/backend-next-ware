@@ -7,6 +7,7 @@ from src.modules.workforce.schema import UserCreate, UserUpdate
 from src.modules.auth.utils import hash_password
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.utils.email import send_invitation_email
 
 logger = logging.getLogger("wareops_erp.modules.workforce.service")
 
@@ -58,6 +59,9 @@ class WorkforceService:
         user_id = current_user.get("_id") or current_user.get("id")
 
         # 1. Scoping Privilege Checks
+        if role not in ["super_admin", "admin"]:
+            raise PermissionException("Unauthorized: Only Super Admins and Admins can register new workforce members.")
+
         if role != "super_admin":
             # Cannot create users with higher or peer roles
             if target_level >= my_level:
@@ -92,6 +96,29 @@ class WorkforceService:
         }
 
         created = await self.repository.create_member(member_doc)
+
+        # Retrieve warehouse details for rich email invitation text
+        try:
+            wh = await self.db.warehouses.find_one({"_id": payload.warehouse_id})
+            company_name = wh.get("businessName") if wh else "NexWare ERP Enterprise"
+            wh_name = wh.get("name") if wh else "North Hub"
+        except Exception:
+            company_name = "NexWare ERP Enterprise"
+            wh_name = "North Hub"
+
+        # Trigger workforce registration invitation email in the background
+        try:
+            import asyncio
+            asyncio.create_task(send_invitation_email(
+                recipient_email=payload.email,
+                recipient_name=payload.name,
+                company_name=company_name,
+                role=payload.role,
+                temp_password=payload.password,
+                warehouse_name=wh_name
+            ))
+        except Exception as e:
+            logger.error(f"Failed to queue workforce invitation email: {e}")
 
         # 4. Log audit trail
         await self.db.audit_logs.insert_one({

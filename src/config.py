@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,13 @@ class Settings(BaseSettings):
 
     # Redis config
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # SMTP invitation email configs
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: str = "noreply@nexware-erp.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",

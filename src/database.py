@@ -14,7 +14,7 @@ db_conn = Database()
 
 
 async def initialize_indexes():
-    """Create unique indexes for collections to enforce relational constraints."""
+    """Create unique and performance indexes for collections to enforce relational constraints and optimize queries."""
     db = db_conn.db
     if db is None:
         return
@@ -26,6 +26,23 @@ async def initialize_indexes():
         await db.inventory_items.create_index([("warehouse_id", 1), ("sku", 1)], unique=True)
         # Compound unique index on table_schemas table_name scoped per warehouse
         await db.table_schemas.create_index([("warehouse_id", 1), ("table_name", 1)], unique=True)
+
+        logger.info("Initializing multi-tenant performance and sorting indexes...")
+        # Multi-tenant and search indexing optimizations
+        await db.users.create_index("tenant_id")
+        await db.inventory_items.create_index("tenant_id")
+        await db.inventory_items.create_index("warehouse_id")
+        await db.inventory_items.create_index([("tenant_id", 1), ("warehouse_id", 1)])
+        
+        # Compound indexing for billing to support sorting & aggregation
+        await db.bills.create_index([("tenant_id", 1), ("created_at", -1)])
+        await db.bills.create_index([("tenant_id", 1), ("warehouse_id", 1), ("created_at", -1)])
+        await db.bills.create_index("warehouse_id")
+        
+        # Compound indexing for audit logs (sorted by timestamp descending)
+        await db.audit_logs.create_index([("tenant_id", 1), ("timestamp", -1)])
+        await db.audit_logs.create_index([("tenant_id", 1), ("warehouse_id", 1), ("timestamp", -1)])
+        
         logger.info("Database unique indexes successfully verified and initialized.")
     except Exception as e:
         logger.error(f"Failed to initialize database indexes: {e}")

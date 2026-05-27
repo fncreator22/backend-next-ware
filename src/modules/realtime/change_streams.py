@@ -86,8 +86,34 @@ def normalize_doc(doc: dict) -> dict:
     return doc
 
 
+async def check_change_streams_supported() -> bool:
+    """Check if the MongoDB deployment supports Change Streams (requires replica set or sharded cluster)."""
+    db = db_conn.db
+    if db is None:
+        return False
+    try:
+        res = await db.command("isMaster")
+        if "setName" in res or res.get("msg") == "isdbgrid":
+            return True
+        return False
+    except Exception as e:
+        logger.debug(f"Failed to check change stream support via isMaster: {e}")
+        return False
+
+
 async def start_realtime_change_listeners():
-    """Startup change stream watch loops for core collections in background."""
+    """Startup change stream watch loops for core collections in background if supported."""
+    global change_streams_active
+    
+    supported = await check_change_streams_supported()
+    if not supported:
+        logger.info(
+            "MongoDB Change Streams not supported (Replica Set required). "
+            "Using explicit Manual Pub-Sub event dispatch broker fallback."
+        )
+        change_streams_active = False
+        return
+
     asyncio.create_task(watch_collection("inventory_items", "inventory_change"))
     asyncio.create_task(watch_collection("bills", "billing_completion"))
     asyncio.create_task(watch_collection("audit_logs", "audit_event"))
