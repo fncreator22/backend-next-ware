@@ -109,7 +109,7 @@ A secure, standalone administration utility is available at the repository root 
 This guide details deploying the modular monolith backend in a non-containerized environment:
 
 ### Prerequisites
-* Python 3.12+ installed on host machine.
+
 * Active MongoDB Community Server (v8.0+) or MongoDB Atlas connection string.
 * (Optional) Local or Cloud Redis instance.
 
