@@ -147,9 +147,10 @@ class BillingService:
                         await self.db.audit_logs.insert_one({
                             "action": "bill_create",
                             "description": f"Bill generated: {bill_no} — ${computed_total}",
-                            "userId": user_id,
-                            "userName": current_user["name"],
-                            "warehouseId": wh_id,
+                            "user_id": user_id,
+                            "user_name": current_user["name"],
+                            "warehouse_id": wh_id,
+                            "tenant_id": tenant_id,
                             "timestamp": datetime.utcnow()
                         }, session=session)
 
@@ -243,9 +244,10 @@ class BillingService:
                 await self.db.audit_logs.insert_one({
                     "action": "bill_create",
                     "description": f"Bill generated: {bill_no} — ${computed_total}",
-                    "userId": user_id,
-                    "userName": current_user["name"],
-                    "warehouseId": wh_id,
+                    "user_id": user_id,
+                    "user_name": current_user["name"],
+                    "warehouse_id": wh_id,
+                    "tenant_id": tenant_id,
                     "timestamp": datetime.utcnow()
                 })
 

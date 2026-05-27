@@ -51,7 +51,7 @@ class AuditLogService:
         """Fetch audit log history matching tenant scoping and strict hierarchical role permissions."""
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
-        user_id = str(current_user["_id"])
+        user_id = str(current_user.get("_id") or current_user.get("id", ""))
 
         # Base query scopes per tenant
         query = {"tenant_id": tenant_id}

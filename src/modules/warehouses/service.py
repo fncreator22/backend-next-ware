@@ -54,6 +54,8 @@ class WarehouseService:
         tax_config = {"luxury": 15.0, "normal": 5.0}
         if payload.taxPreference == "none":
             tax_config = {"luxury": 0.0, "normal": 0.0}
+        elif payload.taxPreference == "custom":
+            tax_config = {}
 
         user_id = current_user.get("_id") or current_user.get("id")
 
