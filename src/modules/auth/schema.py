@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 
 
@@ -18,7 +18,12 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     role: str
-    warehouse_id: Optional[str] = None
-    tenant_id: str
+    warehouse_id: Optional[str] = Field(None, alias="warehouseId")
+    tenant_id: str = Field(..., alias="tenantId")
     avatar: str
     status: str
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True
+    )

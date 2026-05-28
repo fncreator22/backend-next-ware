@@ -8,14 +8,16 @@ from src.modules.items.repository import ItemRepository
 from src.modules.items.schema import ItemCreate, ItemUpdate
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.modules.audit_logs.service import AuditLogService
 
 logger = logging.getLogger("wareops_erp.modules.items.service")
 
 
 class ItemService:
-    def __init__(self, repository: ItemRepository = Depends(), db=Depends(get_db)):
+    def __init__(self, repository: ItemRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
         self.repository = repository
         self.db = db
+        self.audit = audit
 
     def _convert_decimal128_value(self, val) -> float:
         """Helper to convert potential Decimal128 from database aggregates into float."""
@@ -129,14 +131,14 @@ class ItemService:
         created = await self.repository.create_item(item_doc)
 
         # Log audit operation
-        await self.db.audit_logs.insert_one({
-            "action": "item_create",
-            "description": f"Registered new inventory item: '{payload.name}' (SKU: {sku})",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": wh_id,
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="item_create",
+            description=f"Registered new inventory item: '{payload.name}' (SKU: {sku})",
+            tenant_id=tenant_id,
+            warehouse_id=wh_id
+        )
 
         # Trigger real-time broadcast fallback for standalone server configurations
         try:
@@ -189,14 +191,14 @@ class ItemService:
         updated = await self.repository.update_item(item_id, tenant_id, update_data)
 
         # Log audit operation
-        await self.db.audit_logs.insert_one({
-            "action": "item_update",
-            "description": f"Updated inventory item details for: '{item['name']}'",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": item["warehouse_id"],
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="item_update",
+            description=f"Updated inventory item details for: '{item['name']}'",
+            tenant_id=tenant_id,
+            warehouse_id=item["warehouse_id"]
+        )
 
         # Trigger real-time broadcast fallback for standalone server configurations
         try:
@@ -234,14 +236,14 @@ class ItemService:
 
         if deleted:
             # Log audit operation
-            await self.db.audit_logs.insert_one({
-                "action": "item_delete",
-                "description": f"Deleted inventory item: '{item['name']}' (SKU: {item['sku']})",
-                "userId": user_id,
-                "userName": current_user["name"],
-                "warehouseId": item["warehouse_id"],
-                "timestamp": datetime.utcnow()
-            })
+            await self.audit.log_event(
+                user_id=str(user_id),
+                user_name=current_user["name"],
+                action="item_delete",
+                description=f"Deleted inventory item: '{item['name']}' (SKU: {item['sku']})",
+                tenant_id=tenant_id,
+                warehouse_id=item["warehouse_id"]
+            )
 
             # Trigger real-time broadcast fallback for standalone server configurations
             try:

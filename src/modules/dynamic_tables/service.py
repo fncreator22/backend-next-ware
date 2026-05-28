@@ -209,15 +209,7 @@ class DynamicTableService:
 
         row = await self.repo.create_row(doc.model_dump(by_alias=True, exclude_none=True))
 
-        # Log audit trail
-        await self.audit.log_event(
-            user_id=str(current_user["_id"]),
-            user_name=current_user["name"],
-            action="table_row_create",
-            description=f"Appended row into table '{schema['name']}'",
-            tenant_id=current_user["tenant_id"],
-            warehouse_id=schema.get("warehouse_id")
-        )
+        # Row-level audits are omitted to avoid high-frequency log clutter
 
         return self._flatten_row(row)
 
@@ -236,15 +228,7 @@ class DynamicTableService:
 
         updated_row = await self.repo.update_row(row_id, tenant_id, validated_data)
 
-        # Log audit trail
-        await self.audit.log_event(
-            user_id=str(current_user["_id"]),
-            user_name=current_user["name"],
-            action="table_row_update",
-            description=f"Updated row in table '{schema['name']}'",
-            tenant_id=tenant_id,
-            warehouse_id=schema.get("warehouse_id")
-        )
+        # Row-level audits are omitted to avoid high-frequency log clutter
 
         return self._flatten_row(updated_row)
 
@@ -260,15 +244,7 @@ class DynamicTableService:
 
         res = await self.repo.delete_row(row_id, tenant_id)
 
-        # Log audit trail
-        await self.audit.log_event(
-            user_id=str(current_user["_id"]),
-            user_name=current_user["name"],
-            action="table_row_delete",
-            description=f"Deleted row from table '{schema['name']}'",
-            tenant_id=tenant_id,
-            warehouse_id=schema.get("warehouse_id")
-        )
+        # Row-level audits are omitted to avoid high-frequency log clutter
 
         return res
 

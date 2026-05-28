@@ -1,0 +1,286 @@
+{
+  "users": [
+    {
+      "_id": "u6a18545252fd4a8114086467",
+      "name": "Alex Mercer",
+      "email": "user_1779979346@nexware.com",
+      "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$NDtZC0nlnb38LeALAhruXA$9gsNtaNFHpvwIyPyNIw+2QhNY256G1TILO/G2jkv8tU",
+      "role": "super_admin",
+      "warehouse_id": null,
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "avatar": "AM",
+      "status": "active",
+      "created_at": {
+        "$date": "2026-05-28T14:42:26.730000"
+      }
+    },
+    {
+      "_id": "u6a18545352fd4a811408646d",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "name": "Sarah Connor",
+      "email": "manager_1779979347@nexware.com",
+      "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$JvKauCVzrBnjksSnIgd0xA$b8dDM0NHXwfTKswqsgRrHK9TkeOGka0SHI34RT/VDEQ",
+      "role": "manager",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "avatar": "SC",
+      "status": "active",
+      "assignedBy": "u6a18545252fd4a8114086467",
+      "assignedAt": {
+        "$date": "2026-05-28T14:42:27.569000"
+      },
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.569000"
+      }
+    }
+  ],
+  "warehouses": [
+    {
+      "_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "ownerId": "u6a18545252fd4a8114086467",
+      "name": "Dallas Logistics Depot",
+      "businessName": "Dallas Hub Inc.",
+      "address": "400 Freight Way, Dallas, TX 75201",
+      "contact": "+1-214-555-7890",
+      "email": "dallas@nexware.com",
+      "taxPreference": "standard",
+      "logo": "W",
+      "status": "active",
+      "taxConfig": {
+        "luxury": 15.0,
+        "normal": 5.0
+      },
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.167000"
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "_id": "6a18545352fd4a8114086468",
+      "user_id": "u6a18545252fd4a8114086467",
+      "expires_at": {
+        "$date": "2026-06-04T14:42:27.150000"
+      },
+      "is_revoked": false,
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.150000"
+      }
+    }
+  ],
+  "audit_logs": [
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a811408646a"
+      },
+      "action": "warehouse_create",
+      "description": "Warehouse created: 'Dallas Logistics Depot'",
+      "userId": "u6a18545252fd4a8114086467",
+      "userName": "Alex Mercer",
+      "warehouseId": "wh6a18545352fd4a8114086469",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.172000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a811408646c"
+      },
+      "action": "item_create",
+      "description": "Registered new inventory item: 'Industrial Steel Pipes' (SKU: SKU-PIPE-1779979347)",
+      "userId": "u6a18545252fd4a8114086467",
+      "userName": "Alex Mercer",
+      "warehouseId": "wh6a18545352fd4a8114086469",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.221000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a811408646e"
+      },
+      "action": "user_create",
+      "description": "User created: 'Sarah Connor' (manager)",
+      "userId": "u6a18545252fd4a8114086467",
+      "userName": "Alex Mercer",
+      "warehouseId": "wh6a18545352fd4a8114086469",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.585000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a8114086470"
+      },
+      "user_id": "u6a18545252fd4a8114086467",
+      "user_name": "Alex Mercer",
+      "action": "table_schema_create",
+      "description": "Created custom table schema: Maintenance Logs (Scope: wh6a18545352fd4a8114086469)",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.615000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a8114086472"
+      },
+      "user_id": "u6a18545252fd4a8114086467",
+      "user_name": "Alex Mercer",
+      "action": "table_row_create",
+      "description": "Appended row into table 'Maintenance Logs'",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.650000"
+      }
+    },
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a8114086474"
+      },
+      "action": "bill_create",
+      "description": "Bill generated: INV-0001 — $955.500",
+      "user_id": "u6a18545252fd4a8114086467",
+      "user_name": "Alex Mercer",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "timestamp": {
+        "$date": "2026-05-28T14:42:27.701000"
+      }
+    }
+  ],
+  "inventory_items": [
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a811408646b"
+      },
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "sku": "SKU-PIPE-1779979347",
+      "name": "Industrial Steel Pipes",
+      "category": "Tools",
+      "price": {
+        "$decimal": "45.5"
+      },
+      "stock": 80,
+      "unit": "pcs",
+      "tax_category": "normal",
+      "created_by": "u6a18545252fd4a8114086467",
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.219000"
+      }
+    }
+  ],
+  "bills": [
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a8114086473"
+      },
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "bill_no": "INV-0001",
+      "customer": "Texas Ironworks Ltd.",
+      "items": [
+        {
+          "item_id": "6a18545352fd4a811408646b",
+          "name": "Industrial Steel Pipes",
+          "qty": 20,
+          "price": {
+            "$decimal": "45.5"
+          },
+          "tax_category": "normal",
+          "tax_rate_snapshot": {
+            "$decimal": "0.05"
+          }
+        }
+      ],
+      "subtotal": {
+        "$decimal": "910.0"
+      },
+      "tax": {
+        "$decimal": "45.500"
+      },
+      "total": {
+        "$decimal": "955.500"
+      },
+      "tax_config_snapshot": {
+        "normal": {
+          "$decimal": "5.0"
+        },
+        "luxury": {
+          "$decimal": "15.0"
+        }
+      },
+      "created_by": "u6a18545252fd4a8114086467",
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.699000"
+      }
+    }
+  ],
+  "table_schemas": [
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a811408646f"
+      },
+      "name": "Maintenance Logs",
+      "table_name": "Maintenance Logs",
+      "category": "Operations",
+      "description": "Log daily forklift checkups",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "columns": [
+        {
+          "id": "col1",
+          "name": "Forklift ID",
+          "type": "text",
+          "options": "",
+          "required": true
+        },
+        {
+          "id": "col2",
+          "name": "Inspector",
+          "type": "text",
+          "options": "",
+          "required": true
+        },
+        {
+          "id": "col3",
+          "name": "Status",
+          "type": "dropdown",
+          "options": "Ok,Maintenance Required",
+          "required": true
+        }
+      ],
+      "roles": [
+        "admin",
+        "manager"
+      ],
+      "header_color": "#4f46e5",
+      "created_by": "u6a18545252fd4a8114086467",
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.613000"
+      },
+      "status": "active"
+    }
+  ],
+  "table_rows": [
+    {
+      "_id": {
+        "$oid": "6a18545352fd4a8114086471"
+      },
+      "table_id": "6a18545352fd4a811408646f",
+      "warehouse_id": "wh6a18545352fd4a8114086469",
+      "tenant_id": "t6a18545252fd4a8114086466",
+      "data": {
+        "col1": "FL-004",
+        "col2": "Sarah Connor",
+        "col3": "Ok"
+      },
+      "created_at": {
+        "$date": "2026-05-28T14:42:27.647000"
+      }
+    }
+  ]
+}

@@ -3,6 +3,17 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 
 
+class AuditLogCreate(BaseModel):
+    action: str = Field(..., min_length=2, max_length=100)
+    description: str = Field(..., min_length=2, max_length=500)
+    warehouse_id: Optional[str] = Field(None, alias="warehouseId")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        str_strip_whitespace=True
+    )
+
+
 class AuditLogResponse(BaseModel):
     id: str = Field(..., alias="id")
     action: str

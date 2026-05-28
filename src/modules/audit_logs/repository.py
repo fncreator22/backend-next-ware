@@ -10,9 +10,9 @@ class AuditLogRepository:
         self.db = db
         self.collection = db.audit_logs
 
-    async def create_log(self, doc: dict) -> dict:
+    async def create_log(self, doc: dict, session = None) -> dict:
         """Insert new immutable audit log document."""
-        res = await self.collection.insert_one(doc)
+        res = await self.collection.insert_one(doc, session=session)
         doc["_id"] = str(res.inserted_id)
         return doc
 

@@ -6,14 +6,17 @@ from src.modules.warehouses.repository import WarehouseRepository
 from src.modules.warehouses.schema import WarehouseCreate, WarehouseUpdate
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.modules.audit_logs.service import AuditLogService
+from src.utils.email import send_warehouse_creation_email
 
 logger = logging.getLogger("wareops_erp.modules.warehouses.service")
 
 
 class WarehouseService:
-    def __init__(self, repository: WarehouseRepository = Depends(), db=Depends(get_db)):
+    def __init__(self, repository: WarehouseRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
         self.repository = repository
         self.db = db
+        self.audit = audit
 
     async def list_warehouses(self, current_user: dict) -> list[dict]:
         """List warehouses scoped dynamically based on active user privileges."""
@@ -77,14 +80,27 @@ class WarehouseService:
         created = await self.repository.create_warehouse(wh_doc)
         
         # Append to audit logs dynamically
-        await self.db.audit_logs.insert_one({
-            "action": "warehouse_create",
-            "description": f"Warehouse created: '{payload.name}'",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": created["_id"],
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="warehouse_create",
+            description=f"Warehouse created: '{payload.name}'",
+            tenant_id=current_user["tenant_id"],
+            warehouse_id=str(created["_id"])
+        )
+
+        # Trigger Super Admin warehouse creation email in the background
+        try:
+            import asyncio
+            asyncio.create_task(send_warehouse_creation_email(
+                recipient_email=current_user["email"],
+                recipient_name=current_user["name"],
+                warehouse_name=payload.name,
+                business_name=payload.businessName,
+                address=payload.address
+            ))
+        except Exception as e:
+            logger.error(f"Failed to queue warehouse activation email: {e}")
 
         return created
 
@@ -110,18 +126,18 @@ class WarehouseService:
         updated = await self.repository.update_warehouse(warehouse_id, update_data)
 
         # Log audit operation
-        await self.db.audit_logs.insert_one({
-            "action": "warehouse_update",
-            "description": f"Warehouse updated: '{wh['name']}' details modified.",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": warehouse_id,
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="warehouse_update",
+            description=f"Warehouse updated: '{wh['name']}' details modified.",
+            tenant_id=tenant_id,
+            warehouse_id=warehouse_id
+        )
 
         return updated
 
-    async def _execute_cascade_deletes(self, warehouse_id: str, user_id: str, warehouse_name: str, session=None):
+    async def _execute_cascade_deletes(self, warehouse_id: str, user_id: str, warehouse_name: str, tenant_id: str, session=None):
         """Execute all core deletions across collections sequentially."""
         # 1. Remove the warehouse itself
         await self.db.warehouses.delete_one({"_id": warehouse_id}, session=session)
@@ -148,14 +164,15 @@ class WarehouseService:
         await self.db.table_schemas.delete_many({"warehouse_id": warehouse_id}, session=session)
 
         # 6. Log audit event
-        await self.db.audit_logs.insert_one({
-            "action": "warehouse_delete",
-            "description": f"Warehouse deleted (cascade): '{warehouse_name}'",
-            "userId": user_id,
-            "userName": "Super Admin",
-            "warehouseId": None,
-            "timestamp": datetime.utcnow()
-        }, session=session)
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name="Super Admin",
+            action="warehouse_delete",
+            description=f"Warehouse deleted (cascade): '{warehouse_name}'",
+            tenant_id=tenant_id,
+            warehouse_id=None,
+            session=session
+        )
 
     async def retire_warehouse_cascade(self, warehouse_id: str, current_user: dict) -> None:
         """Cascade retire warehouse and atomically delete all associated records inside an ACID transaction session."""
@@ -182,7 +199,7 @@ class WarehouseService:
             async with await client.start_session() as session:
                 async with session.start_transaction():
                     try:
-                        await self._execute_cascade_deletes(warehouse_id, user_id, wh["name"], session=session)
+                        await self._execute_cascade_deletes(warehouse_id, user_id, wh["name"], tenant_id, session=session)
                         logger.info(f"Successfully completed transactional cascade deletion for warehouse: {warehouse_id}")
                     except Exception as e:
                         logger.error(f"Failed transactional cascade delete for {warehouse_id}: {e}")
@@ -191,7 +208,7 @@ class WarehouseService:
             # Standalone fallback: execute sequential deletions without a transaction session
             logger.warning(f"MongoDB is running in Standalone mode. Executing sequential warehouse cascade deletion without ACID guarantees...")
             try:
-                await self._execute_cascade_deletes(warehouse_id, user_id, wh["name"], session=None)
+                await self._execute_cascade_deletes(warehouse_id, user_id, wh["name"], tenant_id, session=None)
                 logger.info(f"Successfully completed standalone cascade deletion for warehouse: {warehouse_id}")
             except Exception as e:
                 logger.error(f"Failed standalone cascade delete for {warehouse_id}: {e}")

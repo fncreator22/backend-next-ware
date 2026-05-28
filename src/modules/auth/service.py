@@ -7,13 +7,16 @@ from src.modules.auth.repository import UserRepository
 from src.modules.auth.schema import UserSignup, UserLogin
 from src.modules.auth.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from src.middleware.exceptions import AuthException, ValidationException
+from src.modules.audit_logs.service import AuditLogService
+from src.utils.email import send_registration_email
 
 logger = logging.getLogger("wareops_erp.modules.auth.service")
 
 
 class AuthService:
-    def __init__(self, repository: UserRepository = Depends()):
+    def __init__(self, repository: UserRepository = Depends(), audit: AuditLogService = Depends()):
         self.repository = repository
+        self.audit = audit
 
     async def register_tenant(self, payload: UserSignup) -> dict:
         """Register a new Super Admin tenant and set up initial profile."""
@@ -44,6 +47,25 @@ class AuthService:
         created_user = await self.repository.create_user(user_doc)
         logger.info(f"Successfully registered Super Admin user: {created_user['_id']} with tenant ID: {tenant_id}")
         
+        # Log signup audit trail
+        await self.audit.log_event(
+            user_id=str(created_user["_id"]),
+            user_name=created_user["name"],
+            action="signup",
+            description=f"Signed up new user account: {created_user['email']} (Super Admin)",
+            tenant_id=tenant_id
+        )
+
+        # Trigger Super Admin registration email in the background
+        try:
+            import asyncio
+            asyncio.create_task(send_registration_email(
+                recipient_email=created_user["email"],
+                recipient_name=created_user["name"]
+            ))
+        except Exception as e:
+            logger.error(f"Failed to queue registration welcome email: {e}")
+
         return {
             "id": created_user["_id"],
             "name": created_user["name"],
@@ -90,6 +112,16 @@ class AuthService:
         # Refresh token is 7 days, Access token is 15 minutes
         expires_at = datetime.utcnow() + timedelta(days=7)
         await self.repository.add_session(user["_id"], token_id, expires_at)
+
+        # Log login audit trail
+        await self.audit.log_event(
+            user_id=str(user["_id"]),
+            user_name=user["name"],
+            action="login",
+            description=f"User logged in successfully: {user['email']}",
+            tenant_id=user["tenant_id"],
+            warehouse_id=user.get("warehouse_id")
+        )
 
         return {
             "access_token": access_token,
@@ -149,6 +181,21 @@ class AuthService:
             jti = payload.get("jti")
             if jti:
                 await self.repository.revoke_session(jti)
-        except Exception:
+                
+                # Log logout audit trail
+                user_id = payload.get("user_id")
+                if user_id:
+                    user = await self.repository.find_by_id(user_id)
+                    if user:
+                        await self.audit.log_event(
+                            user_id=str(user["_id"]),
+                            user_name=user["name"],
+                            action="logout",
+                            description=f"User logged out successfully: {user['email']}",
+                            tenant_id=user["tenant_id"],
+                            warehouse_id=user.get("warehouse_id")
+                        )
+        except Exception as e:
             # Silent fallback since logout should not crash the frontend
+            logger.warning(f"Failed to log logout event: {e}")
             pass

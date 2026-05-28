@@ -19,7 +19,8 @@ class AuditLogService:
         action: str,
         description: str,
         tenant_id: str,
-        warehouse_id: Optional[str] = None
+        warehouse_id: Optional[str] = None,
+        session = None
     ) -> dict:
         """Create and write a new immutable audit log document."""
         doc = {
@@ -31,7 +32,7 @@ class AuditLogService:
             "tenant_id": tenant_id,
             "timestamp": datetime.utcnow()
         }
-        log = await self.repo.create_log(doc)
+        log = await self.repo.create_log(doc, session=session)
         
         # Trigger real-time broadcast fallback for standalone server configurations
         try:

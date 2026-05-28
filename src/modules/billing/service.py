@@ -11,6 +11,7 @@ from src.modules.warehouses.repository import WarehouseRepository
 from src.modules.items.repository import ItemRepository
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.modules.audit_logs.service import AuditLogService
 
 logger = logging.getLogger("wareops_erp.modules.billing.service")
 
@@ -21,12 +22,14 @@ class BillingService:
         repository: InvoiceRepository = Depends(),
         warehouse_repo: WarehouseRepository = Depends(),
         item_repo: ItemRepository = Depends(),
-        db=Depends(get_db)
+        db=Depends(get_db),
+        audit: AuditLogService = Depends()
     ):
         self.repository = repository
         self.warehouse_repo = warehouse_repo
         self.item_repo = item_repo
         self.db = db
+        self.audit = audit
 
     def _convert_decimal128_value(self, val) -> float:
         """Helper to convert BSON Decimal128 fields back to float."""
@@ -144,15 +147,15 @@ class BillingService:
                         created = await self.repository.create_invoice(invoice_doc, session=session)
 
                         # Insert audit log inside session
-                        await self.db.audit_logs.insert_one({
-                            "action": "bill_create",
-                            "description": f"Bill generated: {bill_no} — ${computed_total}",
-                            "user_id": user_id,
-                            "user_name": current_user["name"],
-                            "warehouse_id": wh_id,
-                            "tenant_id": tenant_id,
-                            "timestamp": datetime.utcnow()
-                        }, session=session)
+                        await self.audit.log_event(
+                            user_id=user_id,
+                            user_name=current_user["name"],
+                            action="bill_create",
+                            description=f"Bill generated: {bill_no} — ${computed_total}",
+                            tenant_id=tenant_id,
+                            warehouse_id=wh_id,
+                            session=session
+                        )
 
                         # Trigger real-time broadcast fallback for standalone server configurations
                         try:
@@ -241,15 +244,14 @@ class BillingService:
                 created = await self.repository.create_invoice(invoice_doc, session=None)
 
                 # Insert audit log
-                await self.db.audit_logs.insert_one({
-                    "action": "bill_create",
-                    "description": f"Bill generated: {bill_no} — ${computed_total}",
-                    "user_id": user_id,
-                    "user_name": current_user["name"],
-                    "warehouse_id": wh_id,
-                    "tenant_id": tenant_id,
-                    "timestamp": datetime.utcnow()
-                })
+                await self.audit.log_event(
+                    user_id=user_id,
+                    user_name=current_user["name"],
+                    action="bill_create",
+                    description=f"Bill generated: {bill_no} — ${computed_total}",
+                    tenant_id=tenant_id,
+                    warehouse_id=wh_id
+                )
 
                 # Trigger real-time broadcast fallback for standalone server configurations
                 try:

@@ -1,0 +1,72 @@
+{
+  "users": [
+    {
+      "_id": "u6a18448552fd4a8114086425",
+      "name": "Integration Admin",
+      "email": "test_sa_1779975300@wareops.io",
+      "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$J+G/abgI1w7MOCs+Izz7iw$E2WnNt/kiiE3pO7RbncoFKP81oq1p3Va90P9c/rvICY",
+      "role": "super_admin",
+      "warehouse_id": null,
+      "tenant_id": "t6a18448552fd4a8114086424",
+      "avatar": "IA",
+      "status": "active",
+      "created_at": {
+        "$date": "2026-05-28T13:35:01.239000"
+      }
+    }
+  ],
+  "warehouses": [
+    {
+      "_id": "wh6a18448552fd4a8114086427",
+      "tenant_id": "t6a18448552fd4a8114086424",
+      "ownerId": "u6a18448552fd4a8114086425",
+      "name": "East Coast Logistics",
+      "businessName": "East Coast Logistics LLC",
+      "address": "150 Harbor Blvd, Boston, MA 02110",
+      "contact": "+1-617-555-9876",
+      "email": "boston_ops@eastcoast.com",
+      "taxPreference": "standard",
+      "logo": "🚛",
+      "status": "active",
+      "taxConfig": {
+        "luxury": 15.0,
+        "normal": 5.0
+      },
+      "created_at": {
+        "$date": "2026-05-28T13:35:01.557000"
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "_id": "6a18448552fd4a8114086426",
+      "user_id": "u6a18448552fd4a8114086425",
+      "expires_at": {
+        "$date": "2026-06-04T13:35:01.542000"
+      },
+      "is_revoked": false,
+      "created_at": {
+        "$date": "2026-05-28T13:35:01.542000"
+      }
+    }
+  ],
+  "audit_logs": [
+    {
+      "_id": {
+        "$oid": "6a18448552fd4a8114086428"
+      },
+      "action": "warehouse_create",
+      "description": "Warehouse created: 'East Coast Logistics'",
+      "userId": "u6a18448552fd4a8114086425",
+      "userName": "Integration Admin",
+      "warehouseId": "wh6a18448552fd4a8114086427",
+      "timestamp": {
+        "$date": "2026-05-28T13:35:01.559000"
+      }
+    }
+  ],
+  "inventory_items": [],
+  "bills": [],
+  "table_schemas": [],
+  "table_rows": []
+}

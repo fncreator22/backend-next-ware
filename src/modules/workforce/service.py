@@ -8,6 +8,7 @@ from src.modules.auth.utils import hash_password
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
 from src.utils.email import send_invitation_email
+from src.modules.audit_logs.service import AuditLogService
 
 logger = logging.getLogger("wareops_erp.modules.workforce.service")
 
@@ -22,9 +23,10 @@ ROLE_LEVELS = {
 
 
 class WorkforceService:
-    def __init__(self, repository: WorkforceRepository = Depends(), db=Depends(get_db)):
+    def __init__(self, repository: WorkforceRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
         self.repository = repository
         self.db = db
+        self.audit = audit
 
     async def list_workforce(self, current_user: dict) -> list[dict]:
         """Fetch workforce members scoped to tenant, warehouse access, and role hierarchy bounds."""
@@ -102,9 +104,11 @@ class WorkforceService:
             wh = await self.db.warehouses.find_one({"_id": payload.warehouse_id})
             company_name = wh.get("businessName") if wh else "NexWare ERP Enterprise"
             wh_name = wh.get("name") if wh else "North Hub"
+            wh_email = wh.get("email") if wh else None
         except Exception:
             company_name = "NexWare ERP Enterprise"
             wh_name = "North Hub"
+            wh_email = None
 
         # Trigger workforce registration invitation email in the background
         try:
@@ -115,20 +119,21 @@ class WorkforceService:
                 company_name=company_name,
                 role=payload.role,
                 temp_password=payload.password,
-                warehouse_name=wh_name
+                warehouse_name=wh_name,
+                sender_email=wh_email
             ))
         except Exception as e:
             logger.error(f"Failed to queue workforce invitation email: {e}")
 
         # 4. Log audit trail
-        await self.db.audit_logs.insert_one({
-            "action": "user_create",
-            "description": f"User created: '{payload.name}' ({payload.role})",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": payload.warehouse_id,
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="user_create",
+            description=f"User created: '{payload.name}' ({payload.role})",
+            tenant_id=current_user["tenant_id"],
+            warehouse_id=payload.warehouse_id
+        )
 
         # Trigger real-time broadcast fallback for standalone server configurations
         try:
@@ -192,14 +197,14 @@ class WorkforceService:
         updated = await self.repository.update_member(member_id, update_data)
 
         # 3. Log audit trail
-        await self.db.audit_logs.insert_one({
-            "action": "user_update",
-            "description": f"User profile updated: '{target['name']}' details modified.",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": target.get("warehouse_id"),
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="user_update",
+            description=f"User profile updated: '{target['name']}' details modified.",
+            tenant_id=tenant_id,
+            warehouse_id=target.get("warehouse_id")
+        )
 
         # Trigger real-time broadcast fallback for standalone server configurations
         try:
@@ -243,14 +248,14 @@ class WorkforceService:
         await self.repository.delete_member(member_id)
 
         # 3. Log audit trail
-        await self.db.audit_logs.insert_one({
-            "action": "user_delete",
-            "description": f"User deleted: '{target['name']}' removed from platform.",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": target.get("warehouse_id"),
-            "timestamp": datetime.utcnow()
-        })
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="user_delete",
+            description=f"User deleted: '{target['name']}' removed from platform.",
+            tenant_id=tenant_id,
+            warehouse_id=target.get("warehouse_id")
+        )
 
         # Trigger real-time broadcast fallback for standalone server configurations
         try:

@@ -28,8 +28,8 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     role: str
-    warehouse_id: Optional[str] = None
-    tenant_id: str
+    warehouse_id: Optional[str] = Field(None, alias="warehouseId")
+    tenant_id: str = Field(..., alias="tenantId")
     avatar: str
     status: str
 
