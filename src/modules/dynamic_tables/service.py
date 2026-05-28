@@ -7,6 +7,7 @@ from src.modules.dynamic_tables.repository import DynamicTableRepository
 from src.modules.dynamic_tables.model import TableSchemaDocument, TableColumnModel, TableRowDocument
 from src.modules.audit_logs.service import AuditLogService
 from src.middleware.exceptions import ValidationException, PermissionException, NotFoundException
+from src.modules.realtime.websocket_manager import manager
 
 logger = logging.getLogger("wareops_erp.modules.dynamic_tables.service")
 
@@ -27,15 +28,11 @@ class DynamicTableService:
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 
-        # Base query scopes per tenant
         query = {"tenant_id": tenant_id}
 
-        # Multi-Tenant warehouse boundary restriction
         if role != "super_admin":
-            # Other roles can only access tables in their assigned warehouse
             query["warehouse_id"] = current_user.get("warehouse_id")
         elif warehouse_id:
-            # Super Admin can filter by warehouse
             query["warehouse_id"] = warehouse_id
 
         schemas = await self.repo.list_schemas(query)
@@ -47,7 +44,6 @@ class DynamicTableService:
         if not schema:
             raise NotFoundException("Custom operational table schema not found.")
 
-        # Non-Super Admins are bounded by assigned warehouse location
         if current_user.get("role") != "super_admin" and schema.get("warehouse_id") != current_user.get("warehouse_id"):
             raise PermissionException("You do not have access to this warehouse's schemas.")
 
@@ -60,28 +56,25 @@ class DynamicTableService:
 
         warehouse_id = payload.warehouse_id
         if role != "super_admin":
-            # Force Admin warehouse scope to their own assigned workspace
             warehouse_id = current_user.get("warehouse_id")
 
-        # Uniqueness assertion scoped per warehouse bounds
         existing = await self.repo.find_schema_by_name_and_warehouse(payload.name, warehouse_id, tenant_id)
         if existing:
             raise ValidationException(f"A custom table named '{payload.name}' already exists in this warehouse workspace.")
 
-        # Map column models
         cols = []
         for c in payload.columns:
             cols.append(TableColumnModel(
                 id=c.id,
                 name=c.name,
                 type=c.type,
-                options=c.options or "",
+                options=self._normalize_options(c.options or ""),
                 required=c.required
             ))
 
         doc = TableSchemaDocument(
             name=payload.name,
-            table_name=payload.name,  # unique compound index matches table_name
+            table_name=payload.name,
             category=payload.category or "Custom",
             description=payload.description or "",
             warehouse_id=warehouse_id,
@@ -95,8 +88,7 @@ class DynamicTableService:
         )
 
         schema = await self.repo.create_schema(doc.model_dump(by_alias=True, exclude_none=True))
-        
-        # Log audit trail
+
         wh_name = warehouse_id if warehouse_id else "Global"
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
@@ -107,6 +99,14 @@ class DynamicTableService:
             warehouse_id=warehouse_id
         )
 
+        # Broadcast schema creation event
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_schema_created",
+            data={"tableId": str(schema["_id"]), "name": payload.name},
+            warehouse_id=warehouse_id
+        )
+
         return schema
 
     async def update_schema(self, table_id: str, payload: Any, current_user: dict) -> dict:
@@ -114,7 +114,6 @@ class DynamicTableService:
         schema = await self.get_schema_detail(table_id, current_user)
         tenant_id = current_user["tenant_id"]
 
-        # Validate unique constraint if name changes
         if payload.name != schema["name"]:
             existing = await self.repo.find_schema_by_name_and_warehouse(payload.name, schema.get("warehouse_id"), tenant_id)
             if existing and str(existing["_id"]) != table_id:
@@ -126,7 +125,7 @@ class DynamicTableService:
                 "id": c.id,
                 "name": c.name,
                 "type": c.type,
-                "options": c.options or "",
+                "options": self._normalize_options(c.options or ""),
                 "required": c.required
             })
 
@@ -142,13 +141,19 @@ class DynamicTableService:
 
         updated = await self.repo.update_schema(table_id, tenant_id, update_data)
 
-        # Log audit trail
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
             user_name=current_user["name"],
             action="table_schema_update",
             description=f"Updated custom table schema: {payload.name}",
             tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
+
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_schema_updated",
+            data={"tableId": table_id, "name": payload.name},
             warehouse_id=schema.get("warehouse_id")
         )
 
@@ -159,20 +164,24 @@ class DynamicTableService:
         schema = await self.get_schema_detail(table_id, current_user)
         tenant_id = current_user["tenant_id"]
 
-        # Cascade purge rows under this table
         rows_deleted = await self.repo.delete_all_rows_for_table(table_id, tenant_id)
         logger.info(f"Cascaded delete cleared {rows_deleted} row documents for table_id: {table_id}")
 
-        # Delete table schema
         res = await self.repo.delete_schema(table_id, tenant_id)
 
-        # Log audit trail
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
             user_name=current_user["name"],
             action="table_schema_delete",
             description=f"Deleted custom table schema: {schema['name']} (Purged {rows_deleted} rows)",
             tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
+
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_schema_deleted",
+            data={"tableId": table_id},
             warehouse_id=schema.get("warehouse_id")
         )
 
@@ -186,8 +195,6 @@ class DynamicTableService:
         self._assert_role_access(current_user, schema)
 
         rows = await self.repo.list_rows_by_table(table_id, current_user["tenant_id"])
-        
-        # Symmetrically flatten dynamic rows mapping for direct SPA compatibility
         flattened = [self._flatten_row(r) for r in rows]
         return flattened
 
@@ -196,7 +203,6 @@ class DynamicTableService:
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
-        # Compile schemas and validate fields dynamically at runtime
         validated_data = self.validate_row_against_schema(schema, row_data)
 
         doc = TableRowDocument(
@@ -208,10 +214,22 @@ class DynamicTableService:
         )
 
         row = await self.repo.create_row(doc.model_dump(by_alias=True, exclude_none=True))
+        flat = self._flatten_row(row)
 
-        # Row-level audits are omitted to avoid high-frequency log clutter
+        # Broadcast row insertion to all connected collaborators on this table
+        await manager.broadcast_event(
+            tenant_id=current_user["tenant_id"],
+            event_type="table_row_created",
+            data={
+                "tableId": table_id,
+                "row": flat,
+                "actorName": current_user.get("name", "Unknown"),
+                "actorId": str(current_user["_id"])
+            },
+            warehouse_id=schema.get("warehouse_id")
+        )
 
-        return self._flatten_row(row)
+        return flat
 
     async def update_row(self, table_id: str, row_id: str, row_data: Dict[str, Any], current_user: dict) -> dict:
         """Update validated custom row fields."""
@@ -223,14 +241,25 @@ class DynamicTableService:
         if not row or row["table_id"] != table_id:
             raise NotFoundException("Row document not found in this table.")
 
-        # Compile schemas and validate fields dynamically at runtime
         validated_data = self.validate_row_against_schema(schema, row_data)
-
         updated_row = await self.repo.update_row(row_id, tenant_id, validated_data)
+        flat = self._flatten_row(updated_row)
 
-        # Row-level audits are omitted to avoid high-frequency log clutter
+        # Broadcast row update to collaborators
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_row_updated",
+            data={
+                "tableId": table_id,
+                "rowId": row_id,
+                "row": flat,
+                "actorName": current_user.get("name", "Unknown"),
+                "actorId": str(current_user["_id"])
+            },
+            warehouse_id=schema.get("warehouse_id")
+        )
 
-        return self._flatten_row(updated_row)
+        return flat
 
     async def delete_row(self, table_id: str, row_id: str, current_user: dict) -> bool:
         """Delete custom row document."""
@@ -244,9 +273,66 @@ class DynamicTableService:
 
         res = await self.repo.delete_row(row_id, tenant_id)
 
-        # Row-level audits are omitted to avoid high-frequency log clutter
+        # Broadcast row deletion
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_row_deleted",
+            data={
+                "tableId": table_id,
+                "rowId": row_id,
+                "actorName": current_user.get("name", "Unknown"),
+                "actorId": str(current_user["_id"])
+            },
+            warehouse_id=schema.get("warehouse_id")
+        )
 
         return res
+
+    async def import_rows(self, table_id: str, rows_data: List[Dict[str, Any]], current_user: dict) -> dict:
+        """Bulk import multiple rows into a custom table (admin/manager only)."""
+        schema = await self.get_schema_detail(table_id, current_user)
+        self._assert_role_access(current_user, schema)
+
+        tenant_id = current_user["tenant_id"]
+        warehouse_id = schema.get("warehouse_id") or current_user.get("warehouse_id") or "Global"
+
+        inserted = 0
+        errors = []
+
+        for i, row_data in enumerate(rows_data):
+            try:
+                validated_data = self.validate_row_against_schema(schema, row_data)
+                doc = TableRowDocument(
+                    table_id=table_id,
+                    warehouse_id=warehouse_id,
+                    tenant_id=tenant_id,
+                    data=validated_data,
+                    created_at=datetime.utcnow()
+                )
+                await self.repo.create_row(doc.model_dump(by_alias=True, exclude_none=True))
+                inserted += 1
+            except Exception as e:
+                errors.append({"row": i + 1, "error": str(e)})
+
+        # Audit the bulk import
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_rows_import",
+            description=f"Bulk imported {inserted} rows into table '{schema['name']}' ({len(errors)} errors)",
+            tenant_id=tenant_id,
+            warehouse_id=warehouse_id
+        )
+
+        # Broadcast import complete so all collaborators refresh
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_rows_imported",
+            data={"tableId": table_id, "inserted": inserted, "actorName": current_user.get("name", "Unknown")},
+            warehouse_id=warehouse_id
+        )
+
+        return {"inserted": inserted, "errors": errors, "total": len(rows_data)}
 
     # --- DYNAMIC VALIDATION SERVICES ---
 
@@ -257,7 +343,6 @@ class DynamicTableService:
             col_id = col["id"]
             col_type = col["type"]
 
-            # Map to runtime Python types
             py_type = str
             if col_type in ("number", "price"):
                 py_type = float
@@ -270,21 +355,17 @@ class DynamicTableService:
             else:
                 fields[col_id] = (Optional[py_type], Field(default=None))
 
-        # Compile dynamic Pydantic validator model
         DynamicRowModel = create_model(f"DynamicRow_{str(schema_doc['_id'])}", **fields)
 
-        # Remove system fields from row_data to avoid Pydantic validation errors
         row_fields = {k: v for k, v in row_data.items() if k in fields}
 
-        # Execute structural type and presence validations
         try:
             validated = DynamicRowModel(**row_fields)
             validated_dict = validated.model_dump()
         except Exception as e:
-            # Raise detailed error envelopes
             raise ValidationException(f"Runtime schema type mismatch error: {e}")
 
-        # Execute custom options constraints validations
+        # Custom options constraint validation with proper normalization
         for col in schema_doc.get("columns", []):
             col_id = col["id"]
             col_type = col["type"]
@@ -292,17 +373,38 @@ class DynamicTableService:
 
             if val is not None and val != "":
                 if col_type == "dropdown":
-                    allowed_opts = [o.strip() for o in (col.get("options") or "").split(",") if o.strip()]
-                    if allowed_opts and str(val) not in allowed_opts:
-                        raise ValidationException(f"Value '{val}' is not allowed for dropdown column '{col['name']}'. Allowed: {allowed_opts}")
+                    # FIX: Properly parse and normalize dropdown options
+                    raw_options = col.get("options") or ""
+                    allowed_opts = [o.strip() for o in raw_options.split(",") if o.strip()]
+                    if allowed_opts:
+                        normalized_val = str(val).strip()
+                        if normalized_val not in allowed_opts:
+                            raise ValidationException(
+                                f"Value '{normalized_val}' is not a valid option for dropdown column '{col['name']}'. "
+                                f"Allowed values: {allowed_opts}"
+                            )
+                        # Replace the validated_dict value with the normalized (stripped) version
+                        validated_dict[col_id] = normalized_val
                 elif col_type == "status":
                     allowed_status = ["Todo", "In Progress", "Done"]
-                    if str(val) not in allowed_status:
-                        raise ValidationException(f"Value '{val}' is not allowed for status column '{col['name']}'. Allowed: {allowed_status}")
+                    normalized_val = str(val).strip()
+                    if normalized_val not in allowed_status:
+                        raise ValidationException(
+                            f"Value '{normalized_val}' is not allowed for status column '{col['name']}'. "
+                            f"Allowed: {allowed_status}"
+                        )
+                    validated_dict[col_id] = normalized_val
 
         return validated_dict
 
     # --- AUXILIARY UTILITIES ---
+
+    def _normalize_options(self, raw: str) -> str:
+        """Normalize comma-separated option strings: trim whitespace, remove empty entries."""
+        if not raw:
+            return ""
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return ",".join(parts)
 
     def _assert_role_access(self, current_user: dict, schema: dict):
         """Restrict reads/writes to custom schemas by allowed role definitions."""

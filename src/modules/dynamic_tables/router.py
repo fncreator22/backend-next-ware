@@ -131,3 +131,22 @@ async def delete_row(
         "success": True,
         "message": "Row successfully deleted from custom table."
     }
+
+
+@router.post("/{tableId}/rows/import", status_code=status.HTTP_200_OK, response_model=dict)
+async def import_rows(
+    tableId: str,
+    payload: list,
+    current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager"])),
+    service: DynamicTableService = Depends()
+):
+    """
+    Bulk import multiple row documents from CSV/JSON payload (Admin/Manager only).
+    Accepts a list of row dicts keyed by column id.
+    """
+    result = await service.import_rows(tableId, payload, current_user)
+    return {
+        "success": True,
+        "message": f"Import complete: {result['inserted']} rows inserted, {len(result['errors'])} errors.",
+        "data": result
+    }
