@@ -10,6 +10,7 @@ class WarehouseCreate(BaseModel):
     email: EmailStr
     taxPreference: str = "standard"
     logo: str = "🏭"
+    currency: Optional[str] = ""
 
 
 class WarehouseUpdate(BaseModel):
@@ -21,3 +22,5 @@ class WarehouseUpdate(BaseModel):
     taxPreference: Optional[str] = None
     logo: Optional[str] = None
     taxConfig: Optional[Dict[str, float]] = None
+    currency: Optional[str] = None
+

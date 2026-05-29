@@ -73,6 +73,7 @@ class WarehouseService:
             "taxPreference": payload.taxPreference,
             "logo": payload.logo,
             "status": "active",
+            "currency": payload.currency or "",
             "taxConfig": tax_config,
             "created_at": datetime.utcnow()
         }

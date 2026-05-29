@@ -15,6 +15,8 @@ class WarehouseDocument(BaseModel):
     taxPreference: str = "standard"
     logo: str = "🏭"
     status: str = "active"
+    currency: str = ""
     taxConfig: Dict[str, float] = Field(default_factory=lambda: {"luxury": 15.0, "normal": 5.0})
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
+
