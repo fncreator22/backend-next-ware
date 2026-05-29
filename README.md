@@ -1,181 +1,314 @@
-# NexWare ERP — Enterprise Multi-Tenant Monolith Monolith Backend
+# NexWare ERP — Backend API Service
 
-NexWare ERP is a high-performance, secure, and multi-tenant ERP platform backend designed as a modular monolith. It exposes a fully asynchronous FastAPI REST API integrated with MongoDB, WebSockets, rate limiting, centralized logs, heartbeat telemetry, and resilient standalone fallbacks.
-
----
-
-## 🏗️ Architectural Folder Topology
-
-The codebase is organized as a clean **Modular Monolith**, where each business domain is completely isolated under `src/modules/` with its own BSON database model, Pydantic schema mappings, Motor async repository layer, business service logic, and REST controllers:
-
-```
-src/
-├── config.py              # Central BaseSettings configuration singleton
-├── database.py            # MongoDB driver connections & index startup triggers
-├── main.py                # Core FastAPI instance, lifecycles, and global middlewares
-├── middleware/
-│   ├── exceptions.py      # Unified domain exception-to-JSON handlers
-│   ├── logging.py         # Centralized Request JSON Logger
-│   └── rate_limiter.py    # Sliding window request protection
-├── utils/
-│   └── cache.py           # CacheManager with automatic local fallback
-└── modules/
-    ├── auth/              # JWT cookie sign-in & refresh rotation
-    ├── warehouses/        # multi-tenant location isolation boundaries
-    ├── workforce/         # RBAC member hierarchies
-    ├── items/             # Decimal128 catalog & category aggregations
-    ├── billing/           # Regional compliant invoicing & stock deductions
-    ├── dynamic_tables/    # Airtable-style dynamic runtime compiler
-    ├── audit_logs/        # Immutable compliance event trackers
-    ├── analytics/         # Dynamic financial aggregate dashboards
-    ├── realtime/          # Multi-tenant WebSocket registries
-    └── health/            # Probes covering DB, Cache, and Host loads
-```
+> ⚡ **FastAPI + MongoDB + WebSockets** — Enterprise-grade multi-tenant ERP backend with Argon2id auth, sliding-window rate limiting, real-time change streams, and a Redis/in-memory dual-tier cache.
 
 ---
 
-## ⚡ Real-Time WebSockets & Fallback Loop Architecture
+## ⚡ Quick Start — Run on Any Device
 
-NexWare features a robust, multi-tenant scoped WebSocket gateway:
+> **Prerequisites:** [Python 3.11+](https://python.org/) · [MongoDB v6+](https://www.mongodb.com/try/download/community) · [Git](https://git-scm.com/)
 
-### 1. Multi-Tenant WebSocket Scoping
-* **Route**: `WS /api/v1/realtime/ws?token=<access_token>`
-* **Scoping Security**: Scopes client sockets inside a thread-locked connections registry:
-  ```python
-  active_connections[tenant_id][warehouse_id]: Set[WebSocket]
-  ```
-  JWT access tokens are decrypted during handshake query parameter validation. Sockets are separated strictly by `tenant_id`. Standard members only receive updates scoped to their designated `warehouse_id`, while Super Admins receive tenant-wide global event broadcasts.
+### Step 1 — Clone the Backend Repository
 
-### 2. Replica Set & Standalone Database Fallback
-* **Replica Set Watch**: On database startup, background tasks attempt to spawn native MongoDB Change Streams (`watch()`) on core collections (`inventory_items`, `bills`, `audit_logs`, `users`).
-* **Standalone Degraded Loop**: If MongoDB is running in standalone mode (no replica set configured), change streams fail gracefully, and the system transitions seamlessly to a **Manual Pub-Sub Broker**. Mutation service layers (Billing payments, catalog edits, workforce updates) automatically broadcast events via the `WebSocketManager` on successful writes, ensuring real-time client updates continue to function flawlessly.
-
----
-
-## 🚀 Caching Abstraction Layer
-
-The `CacheManager` class implements a transparent double-tier storage interface:
-* **Tier 1 (Redis)**: Connects to a distributed Redis instance. Tests connection integrity using a fast async `ping()` on startup.
-* **Tier 2 (In-Memory Fallback)**: If Redis is offline, not installed, or connection fails, the cache shifts automatically to thread-safe local dictionaries. Keys carry timestamp limits and are automatically purged during key lookups or writes to maintain constant memory boundaries.
-
----
-
-## 🔒 Security, Rate Limiting & Observation Middlewares
-
-### 1. Request Protection Rate Limiting
-Intercepts all API requests and tracks request counts per client IP over sliding time windows (100 requests per minute by default).
-* Uses Redis increment pipelines if available.
-* Degrades gracefully to thread-safe local in-memory timestamp arrays.
-* Excludes WebSocket connections and health checkheartbeats from limits.
-* Returns `HTTP 429 Too Many Requests` on violation.
-
-### 2. Centralized Structured Logging
-Interceptors write a clean, single-line JSON request record straight to standard output (`stdout`), ready to be ingested by fluentd, vector, or other centralized log collectors:
-```json
-{"timestamp": "2026-05-25T18:01:17Z", "client_ip": "127.0.0.1", "method": "POST", "path": "/api/v1/items/", "status_code": 201, "latency_ms": 14.83, "tenant_id": "tenant_a"}
-```
-
----
-
-## 💾 Zero-Data Vanilla Reset & Maintenance Utility
-
-NexWare ERP is configured as a completely clean, **zero-data vanilla enterprise starter system** out of the box. All seed users, warehouses, invoices, inventory items, and dynamic tables have been stripped from both the MongoDB database and the plain-JS SPA store.
-
-### First-Time Initialization Workflow
-1. **Launch Database & Caching**: Start MongoDB and Redis (or let it degrade gracefully to thread-safe in-memory cache fallbacks).
-2. **First-Time Signup**: Access the web SPA. Since there are no pre-seeded users in the vanilla starter state, you will be redirected to the signup page. Register your **Super Admin** tenant account.
-3. **Primary Warehouse Creation**: After signup, you will be prompted to register your primary warehouse. Creating this primary warehouse instantly initializes your empty multi-tenant scoped environment.
-4. **Resilient Empty States**: The dashboard, inventory list, invoicing ledger, and Airtable-style dynamic tables render cleanly with beautiful visual empty notifications without a single JS console error.
-
-### Standalone DB Maintenance & Backup CLI Utility
-A secure, standalone administration utility is available at the repository root to perform database maintenance and backups:
-
-```powershell
-# 1. Back up database collections directly to backups/ JSON format (retaining ObjectIds & Decimal128)
-.venv\Scripts\python.exe db_maintenance.py backup --file backups/my_backup.json
-
-# 2. Safely restore database from a JSON backup (retaining indexes and compound unique constraints)
-.venv\Scripts\python.exe db_maintenance.py restore --file backups/my_backup.json
-
-# 3. Clean and reset all database collections to a pristine clean vanilla state
-.venv\Scripts\python.exe db_maintenance.py reset
-```
-
-
----
-
-## 🚀 Bare-Metal VPS, Render, & Railway Production Deployment Guide
-
-This guide details deploying the modular monolith backend in a non-containerized environment:
-
-### Prerequisites
-
-* Active MongoDB Community Server (v8.0+) or MongoDB Atlas connection string.
-* (Optional) Local or Cloud Redis instance.
-
-### Step 1: Environment Configuration
-Create a production `.env` file in the repository root matching the target configurations:
-```env
-HOST="0.0.0.0"
-PORT=8000
-RELOAD=false
-MONGODB_URL="mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority"
-DB_NAME="wareops_erp_production"
-JWT_SECRET="YOUR_HIGH_ENTROPY_CRYPTOGRAPHIC_JWT_SECRET_32_BYTES_MIN"
-REDIS_URL="redis://:<password>@redis-cloud-server:6379/0"
-```
-
-### Step 2: Virtual Environment Setup & Dependency Installation
 ```bash
-# 1. Clone backend repository to target server
-git clone <your-repo-url> backend-warehouse
-cd backend-warehouse
+git clone https://github.com/fncreator22/backend-next-ware.git
+cd backend-next-ware
+```
 
-# 2. Setup Python virtual environment
+---
+
+### Step 2 — Start MongoDB
+
+The backend requires a running MongoDB instance before it will start.
+
+**Windows (if installed as a service):**
+```powershell
+net start MongoDB
+```
+
+**Windows (manual start):**
+```powershell
+"C:\Program Files\MongoDB\Server\8.0\bin\mongod.exe" --dbpath "C:\data\db"
+```
+
+**Linux / macOS:**
+```bash
+sudo systemctl start mongod
+# OR
+mongod --dbpath /data/db
+```
+
+> 💡 **MongoDB Atlas (Cloud):** Set `MONGODB_URL` in your `.env` to your Atlas connection string and skip this step.
+
+---
+
+### Step 3 — Create Python Virtual Environment
+
+```bash
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# 3. Install production dependencies
+# Activate it
+# Windows:
+.venv\Scripts\activate
+
+# Linux / macOS:
+source .venv/bin/activate
+```
+
+---
+
+### Step 4 — Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Step 3: Running via Production Process Manager (PM2 / Systemd)
+---
 
-#### Option A: Deploying via Systemd (Bare-metal Linux VPS)
-Create a new service file `/etc/systemd/system/nexware-backend.service`:
+### Step 5 — Configure Environment Variables
+
+```bash
+# Windows:
+copy .env.example .env
+
+# Linux / macOS:
+cp .env.example .env
+```
+
+Then open `.env` and edit the values:
+
+```env
+# Server
+HOST=127.0.0.1
+PORT=8000
+RELOAD=True
+
+# Database — Local MongoDB
+MONGODB_URL=mongodb://localhost:27017
+DB_NAME=wareops_erp_db
+
+# OR — MongoDB Atlas
+# MONGODB_URL=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
+
+# Security — CHANGE THIS before any production deployment!
+JWT_SECRET=your-cryptographically-random-64-char-secret-string-here
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# Redis (Optional — falls back to in-memory cache automatically)
+REDIS_URL=redis://localhost:6379/0
+
+# SMTP Email (Optional — logs emails to console if not configured)
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM=noreply@nexware-erp.com
+```
+
+---
+
+### Step 6 — Start the Backend Server
+
+```bash
+# Development (with hot-reload on file changes)
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Production (no reload, all interfaces)
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+```
+
+✅ **Backend is live at:** `http://127.0.0.1:8000`
+📖 **Swagger API Docs:** `http://127.0.0.1:8000/docs`
+
+---
+
+## 🧰 All Available Commands
+
+```bash
+# Make sure your virtual environment is activated before running any command
+.venv\Scripts\activate            # Windows
+source .venv/bin/activate         # Linux / macOS
+
+# ── Server ──────────────────────────────────────────────────────────────────
+# Start development server (hot-reload)
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Start production server (no reload)
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# ── Database Maintenance ─────────────────────────────────────────────────────
+# Back up all database collections to JSON
+python db_maintenance.py backup --file backups/my_backup.json
+
+# Restore database from a backup file
+python db_maintenance.py restore --file backups/my_backup.json
+
+# Reset database to a clean vanilla state (deletes all data!)
+python db_maintenance.py reset
+
+# ── Health Verification ──────────────────────────────────────────────────────
+# API health check
+curl http://localhost:8000/health
+
+# MongoDB connection status
+curl http://localhost:8000/health/db
+
+# System metrics (CPU, RAM, OS)
+curl http://localhost:8000/health/system
+
+# Cache status (Redis or in-memory fallback)
+curl http://localhost:8000/health/cache
+```
+
+---
+
+## 🏗️ Architecture & Folder Structure
+
+```text
+backend-next-ware/
+├── .env                    # Local environment variables (not committed)
+├── .env.example            # Template — copy this to .env
+├── requirements.txt        # Pinned Python dependencies
+├── db_maintenance.py       # Database backup / restore / reset CLI utility
+├── src/
+│   ├── config.py           # Pydantic BaseSettings singleton (reads .env)
+│   ├── database.py         # Motor async MongoDB client + index initialization
+│   ├── main.py             # FastAPI app factory, CORS, lifecycle hooks
+│   ├── middleware/
+│   │   ├── exceptions.py   # Domain exception → JSON error handlers
+│   │   ├── logging.py      # Structured JSON request logger (stdout)
+│   │   └── rate_limiter.py # Sliding window IP rate limiter (100 req/60s)
+│   ├── utils/
+│   │   ├── cache.py        # Redis → in-memory dual-tier cache manager
+│   │   └── email.py        # SMTP email sender with console fallback
+│   └── modules/
+│       ├── auth/           # JWT sign-in, refresh rotation, Argon2id hashing
+│       ├── warehouses/     # Multi-tenant warehouse management
+│       ├── workforce/      # RBAC team hierarchy management
+│       ├── items/          # Inventory catalog with Decimal128 pricing
+│       ├── billing/        # Invoicing engine with tax snapshots
+│       ├── dynamic_tables/ # Airtable-style runtime table compiler
+│       ├── audit_logs/     # Immutable compliance event tracking
+│       ├── analytics/      # Financial aggregate dashboards
+│       ├── realtime/       # WebSocket manager + MongoDB change streams
+│       └── health/         # Health probe endpoints (DB, cache, system)
+```
+
+---
+
+## 🔌 API Endpoints Overview
+
+| Category | Base Path | Key Endpoints |
+|:---|:---|:---|
+| **Auth** | `/api/v1/auth` | `POST /signup` · `POST /login` · `POST /refresh` · `POST /logout` |
+| **Warehouses** | `/api/v1/warehouses` | `GET /` · `POST /` · `GET /{id}` · `PUT /{id}` · `DELETE /{id}` |
+| **Workforce** | `/api/v1/workforce` | `GET /` · `POST /` · `PUT /{id}` · `DELETE /{id}` |
+| **Items** | `/api/v1/items` | `GET /` · `POST /` · `PUT /{id}` · `DELETE /{id}` · `POST /bulk-import` |
+| **Billing** | `/api/v1/billing` | `GET /` · `POST /` · `GET /{id}` · `PATCH /{id}/status` |
+| **Tables** | `/api/v1/dynamic-tables` | `GET /` · `POST /` · `POST /{id}/rows` · `PUT /{id}/rows/{row_id}` |
+| **Audit Logs** | `/api/v1/audit-logs` | `GET /` |
+| **Analytics** | `/api/v1/analytics` | `GET /dashboard` · `GET /warehouse/{id}` |
+| **Real-Time** | `/api/v1/realtime` | `WS /ws?token=<access_token>` |
+| **Health** | `/health` | `GET /` · `GET /db` · `GET /cache` · `GET /system` |
+
+📖 Full interactive docs: `http://localhost:8000/docs`
+
+---
+
+## ⚙️ Real-Time Architecture
+
+```text
+Client Browser
+     │
+     │  WebSocket Handshake  →  JWT token validated
+     ▼
+WS /api/v1/realtime/ws
+     │
+     ▼
+WebSocketManager
+     │  active_connections[tenant_id][warehouse_id]: Set[WebSocket]
+     │
+     ├─── Super Admin:  receives ALL tenant broadcasts
+     └─── Staff/Admin:  receives only their warehouse_id events
+
+Backend Services (Billing, Items, Workforce, Tables)
+     │  on successful write mutation
+     ▼
+manager.broadcast(tenant_id, warehouse_id, event_payload)
+     │
+     ├─── MongoDB Replica Set → Change Streams (if available)
+     └─── Standalone Mode    → Manual Pub-Sub event dispatch (fallback)
+```
+
+---
+
+## 🔒 Security Overview
+
+| Threat | Mitigation |
+|:---|:---|
+| Authentication bypass | JWT access + refresh tokens (15min / 7d) |
+| Brute-force login | Sliding-window rate limiter — 429 on violation |
+| Cross-tenant data leak | All DB queries scoped by `tenant_id` |
+| Password storage | Argon2id hashing (OWASP recommended) |
+| CSRF | SameSite cookie restrictions |
+| CORS | Explicit origin allow-list in `config.py` |
+
+> ⚠️ **Production Critical:** Set `JWT_SECRET` to a cryptographically random 64+ character string before any live deployment. Never use the default value.
+
+---
+
+## 🚀 Production Deployment
+
+### Render / Railway (Cloud PaaS)
+
+1. Connect your `backend-next-ware` GitHub repo to Render or Railway
+2. Set **Build Command:** `pip install -r requirements.txt`
+3. Set **Start Command:** `uvicorn src.main:app --host 0.0.0.0 --port $PORT`
+4. Add environment variables in the provider dashboard (copy from `.env.example`)
+
+### Linux VPS (Systemd)
+
+```bash
+# Create systemd service file
+sudo nano /etc/systemd/system/nexware-backend.service
+```
+
 ```ini
 [Unit]
-Description=NexWare ERP FastAPI Monolith Service
-After=network.target
+Description=NexWare ERP FastAPI Backend
+After=network.target mongod.service
 
 [Service]
 User=www-data
-WorkingDirectory=/var/www/backend-warehouse
-ExecStart=/var/www/backend-warehouse/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
+WorkingDirectory=/var/www/backend-next-ware
+ExecStart=/var/www/backend-next-ware/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
 Restart=always
-EnvironmentFile=/var/www/backend-warehouse/.env
+EnvironmentFile=/var/www/backend-next-ware/.env
 
 [Install]
 WantedBy=multi-user.target
 ```
-Start and enable the service:
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl start nexware-backend
 sudo systemctl enable nexware-backend
+sudo systemctl start nexware-backend
 ```
-
-#### Option B: Deploying on Render or Railway
-To host the backend on Git-integrated cloud providers without containers:
-1. **Build Command**: `pip install -r requirements.txt`
-2. **Start Command**: `uvicorn src.main:app --host 0.0.0.0 --port $PORT`
-3. Configure target `.env` parameters inside the provider's Environmental variables dashboard.
 
 ---
 
-## 🎯 Target Performance Metrics
+## 🎯 Performance Targets
 
-* **REST Endpoint Latency**: `< 100ms` (Sub-10ms for cached responses).
-* **WS Event Broadcast Latency**: `< 5ms`.
-* **Cache Read Latency**: `< 1ms` (Sub-0.1ms for InMemory fallback).
-* **Telemetry heartbeats**: `< 2ms`.
+| Metric | Target |
+|:---|:---|
+| REST API Latency | `< 100ms` (sub-10ms for cached) |
+| WebSocket Broadcast | `< 5ms` |
+| Cache Read (Redis) | `< 1ms` |
+| Cache Read (In-Memory) | `< 0.1ms` |
+| Health Probe | `< 2ms` |
+
+---
+
+*NexWare ERP Backend — Enterprise Multi-Tenant Modular Monolith v2.0*
