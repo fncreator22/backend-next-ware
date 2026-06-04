@@ -134,7 +134,12 @@ class AuthService:
                 "warehouse_id": user.get("warehouse_id"),
                 "tenant_id": user["tenant_id"],
                 "avatar": user["avatar"],
-                "status": user["status"]
+                "status": user["status"],
+                "permissionOverrides": user.get("permission_overrides"),
+                "tableOverrides": user.get("table_overrides"),
+                "warehouseOverrides": user.get("warehouse_overrides"),
+                "moduleOverrides": user.get("module_overrides"),
+                "employeeId": user.get("employee_id") or user.get("enterprise_id")
             }
         }
 

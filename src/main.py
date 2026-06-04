@@ -61,6 +61,7 @@ register_exception_handlers(app)
 
 # Import and attach modular routers
 from src.modules.auth import auth_router
+from src.modules.auth.roles_router import router as roles_router
 from src.modules.warehouses import warehouses_router
 from src.modules.items import items_router
 from src.modules.billing import billing_router
@@ -70,12 +71,15 @@ from src.modules.audit_logs import audit_logs_router
 from src.modules.analytics import analytics_router
 from src.modules.realtime.router import router as realtime_router
 from src.modules.health.router import router as health_router
+from src.modules.trash import trash_router
+from src.modules.registry import registry_router
 
 # Direct registration of health check routes under root namespace
 app.include_router(health_router)
 
 # Modular prefix registration under namespace /api/v1
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(roles_router, prefix="/api/v1")
 app.include_router(warehouses_router, prefix="/api/v1")
 app.include_router(items_router, prefix="/api/v1")
 app.include_router(billing_router, prefix="/api/v1")
@@ -84,6 +88,8 @@ app.include_router(workforce_router, prefix="/api/v1")
 app.include_router(audit_logs_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(realtime_router, prefix="/api/v1")
+app.include_router(trash_router, prefix="/api/v1")
+app.include_router(registry_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Health Check"])

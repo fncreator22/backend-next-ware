@@ -29,6 +29,8 @@ class ItemCreate(BaseModel):
     unit: str = Field("pcs")
     tax_category: str = Field("normal", alias="taxCategory")
     warehouse_id: str = Field(..., alias="warehouseId")
+    images: Optional[List[str]] = Field(default_factory=list)
+    barcode: Optional[str] = None
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -45,6 +47,8 @@ class ItemUpdate(BaseModel):
     unit: Optional[str] = None
     tax_category: Optional[str] = Field(None, alias="taxCategory")
     warehouse_id: Optional[str] = Field(None, alias="warehouseId")
+    images: Optional[List[str]] = None
+    barcode: Optional[str] = None
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -65,6 +69,8 @@ class ItemResponse(BaseModel):
     created_by: str = Field(..., alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+    images: Optional[List[str]] = Field(default_factory=list)
+    barcode: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

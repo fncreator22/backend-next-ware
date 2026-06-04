@@ -103,6 +103,16 @@ class DynamicTableRepository:
         cursor = self.rows_collection.find({"table_id": table_id, "tenant_id": tenant_id}).sort("created_at", 1)
         return await cursor.to_list(length=1000)
 
+    async def list_rows_by_table_and_page(self, table_id: str, page_number: int, tenant_id: str) -> list[dict]:
+        """Retrieve dynamic table rows matching table id and page number."""
+        query = {
+            "table_id": table_id,
+            "tenant_id": tenant_id,
+            "page_number": {"$in": [page_number, None]} if page_number == 1 else page_number
+        }
+        cursor = self.rows_collection.find(query).sort("created_at", 1)
+        return await cursor.to_list(length=1000)
+
     async def delete_all_rows_for_table(self, table_id: str, tenant_id: str) -> int:
         """Cascade deletes all row documents belonging to a schema."""
         res = await self.rows_collection.delete_many({"table_id": table_id, "tenant_id": tenant_id})

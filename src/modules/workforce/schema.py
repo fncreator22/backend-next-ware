@@ -8,6 +8,12 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8)
     role: str = "employee"  # employee, staff, manager, admin, super_admin
     warehouse_id: str = Field(..., alias="warehouseId")
+    avatar: Optional[str] = None
+    permission_overrides: Optional[dict] = Field(None, alias="permissionOverrides")
+    table_overrides: Optional[list[str]] = Field(None, alias="tableOverrides")
+    warehouse_overrides: Optional[list[str]] = Field(None, alias="warehouseOverrides")
+    module_overrides: Optional[list[str]] = Field(None, alias="moduleOverrides")
+    employee_id: Optional[str] = Field(None, alias="employeeId")
 
     class Config:
         populate_by_name = True
@@ -18,6 +24,12 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     warehouse_id: Optional[str] = Field(None, alias="warehouseId")
     status: Optional[str] = None
+    avatar: Optional[str] = None
+    permission_overrides: Optional[dict] = Field(None, alias="permissionOverrides")
+    table_overrides: Optional[list[str]] = Field(None, alias="tableOverrides")
+    warehouse_overrides: Optional[list[str]] = Field(None, alias="warehouseOverrides")
+    module_overrides: Optional[list[str]] = Field(None, alias="moduleOverrides")
+    employee_id: Optional[str] = Field(None, alias="employeeId")
 
     class Config:
         populate_by_name = True
@@ -32,6 +44,11 @@ class UserResponse(BaseModel):
     tenant_id: str = Field(..., alias="tenantId")
     avatar: str
     status: str
+    permission_overrides: Optional[dict] = Field(None, alias="permissionOverrides")
+    table_overrides: Optional[list[str]] = Field(None, alias="tableOverrides")
+    warehouse_overrides: Optional[list[str]] = Field(None, alias="warehouseOverrides")
+    module_overrides: Optional[list[str]] = Field(None, alias="moduleOverrides")
+    employee_id: Optional[str] = Field(None, alias="employeeId")
 
     class Config:
         populate_by_name = True

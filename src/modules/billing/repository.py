@@ -30,6 +30,24 @@ class InvoiceRepository:
                     item_copy["price"] = item_copy["price"].to_decimal()
                 if "tax_rate_snapshot" in item_copy and isinstance(item_copy["tax_rate_snapshot"], Decimal128):
                     item_copy["tax_rate_snapshot"] = item_copy["tax_rate_snapshot"].to_decimal()
+                
+                # Convert nested subtotal, tax, and total inside items
+                for key in ["subtotal", "tax", "total"]:
+                    if key in item_copy and isinstance(item_copy[key], Decimal128):
+                        item_copy[key] = item_copy[key].to_decimal()
+
+                # Convert nested taxes list
+                if "taxes" in item_copy and isinstance(item_copy["taxes"], list):
+                    conv_taxes = []
+                    for t in item_copy["taxes"]:
+                        t_copy = dict(t)
+                        if "rate" in t_copy and isinstance(t_copy["rate"], Decimal128):
+                            t_copy["rate"] = t_copy["rate"].to_decimal()
+                        if "amount" in t_copy and isinstance(t_copy["amount"], Decimal128):
+                            t_copy["amount"] = t_copy["amount"].to_decimal()
+                        conv_taxes.append(t_copy)
+                    item_copy["taxes"] = conv_taxes
+                    
                 converted_items.append(item_copy)
             doc["items"] = converted_items
 
@@ -39,6 +57,17 @@ class InvoiceRepository:
                 if key in tc and isinstance(tc[key], Decimal128):
                     tc[key] = tc[key].to_decimal()
             doc["tax_config_snapshot"] = tc
+
+        if "tax_details" in doc and isinstance(doc["tax_details"], list):
+            conv_details = []
+            for t in doc["tax_details"]:
+                t_copy = dict(t)
+                if "rate" in t_copy and isinstance(t_copy["rate"], Decimal128):
+                    t_copy["rate"] = t_copy["rate"].to_decimal()
+                if "amount" in t_copy and isinstance(t_copy["amount"], Decimal128):
+                    t_copy["amount"] = t_copy["amount"].to_decimal()
+                conv_details.append(t_copy)
+            doc["tax_details"] = conv_details
 
         return doc
 
@@ -57,6 +86,24 @@ class InvoiceRepository:
                     item_copy["price"] = Decimal128(item_copy["price"])
                 if "tax_rate_snapshot" in item_copy and isinstance(item_copy["tax_rate_snapshot"], Decimal):
                     item_copy["tax_rate_snapshot"] = Decimal128(item_copy["tax_rate_snapshot"])
+                
+                # Convert nested subtotal, tax, and total inside items
+                for key in ["subtotal", "tax", "total"]:
+                    if key in item_copy and isinstance(item_copy[key], Decimal):
+                        item_copy[key] = Decimal128(item_copy[key])
+
+                # Convert nested taxes list
+                if "taxes" in item_copy and isinstance(item_copy["taxes"], list):
+                    conv_taxes = []
+                    for t in item_copy["taxes"]:
+                        t_copy = dict(t)
+                        if "rate" in t_copy and isinstance(t_copy["rate"], Decimal):
+                            t_copy["rate"] = Decimal128(t_copy["rate"])
+                        if "amount" in t_copy and isinstance(t_copy["amount"], Decimal):
+                            t_copy["amount"] = Decimal128(t_copy["amount"])
+                        conv_taxes.append(t_copy)
+                    item_copy["taxes"] = conv_taxes
+                    
                 converted_items.append(item_copy)
             data["items"] = converted_items
 
@@ -66,6 +113,17 @@ class InvoiceRepository:
                 if key in tc and isinstance(tc[key], Decimal):
                     tc[key] = Decimal128(tc[key])
             data["tax_config_snapshot"] = tc
+
+        if "tax_details" in data and isinstance(data["tax_details"], list):
+            conv_details = []
+            for t in data["tax_details"]:
+                t_copy = dict(t)
+                if "rate" in t_copy and isinstance(t_copy["rate"], Decimal):
+                    t_copy["rate"] = Decimal128(t_copy["rate"])
+                if "amount" in t_copy and isinstance(t_copy["amount"], Decimal):
+                    t_copy["amount"] = Decimal128(t_copy["amount"])
+                conv_details.append(t_copy)
+            data["tax_details"] = conv_details
 
         return data
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Body
 from typing import List, Optional
 from src.modules.auth.dependencies import get_current_user, RequireRole
 from src.modules.dynamic_tables.schema import TableSchemaCreate, TableSchemaResponse
@@ -73,11 +73,12 @@ async def delete_schema(
 @router.get("/{tableId}/rows", response_model=dict)
 async def list_rows(
     tableId: str,
+    page: int = Query(1, alias="page"),
     current_user: dict = Depends(get_current_user),
     service: DynamicTableService = Depends()
 ):
-    """Fetch custom row documents from MongoDB collections matching isolation scopes."""
-    rows = await service.list_rows(tableId, current_user)
+    """Fetch custom row documents from MongoDB collections matching isolation scopes and page number."""
+    rows = await service.list_rows(tableId, current_user, page=page)
     return {
         "success": True,
         "data": rows,
@@ -89,15 +90,32 @@ async def list_rows(
 async def append_row(
     tableId: str,
     payload: dict,
+    page: int = Query(1, alias="page"),
     current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager", "staff"])),
     service: DynamicTableService = Depends()
 ):
     """Append validated custom row documents into database (Admins, Managers, and Staff)."""
-    row = await service.append_row(tableId, payload, current_user)
+    row = await service.append_row(tableId, payload, current_user, page=page)
     return {
         "success": True,
         "message": "Row successfully appended into custom table.",
         "data": row
+    }
+
+
+@router.post("/{tableId}/pages", response_model=dict)
+async def add_table_page(
+    tableId: str,
+    current_user: dict = Depends(get_current_user),
+    service: DynamicTableService = Depends()
+):
+    """Add a new page to the custom table under subscription bounds."""
+    schema = await service.add_page(tableId, current_user)
+    serialized = TableSchemaResponse.from_doc(schema).model_dump(by_alias=True)
+    return {
+        "success": True,
+        "data": serialized,
+        "message": "New table page created successfully."
     }
 
 
@@ -136,7 +154,8 @@ async def delete_row(
 @router.post("/{tableId}/rows/import", status_code=status.HTTP_200_OK, response_model=dict)
 async def import_rows(
     tableId: str,
-    payload: list,
+    payload: list = Body(...),
+    page: int = Query(1, alias="page"),
     current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager"])),
     service: DynamicTableService = Depends()
 ):
@@ -144,7 +163,7 @@ async def import_rows(
     Bulk import multiple row documents from CSV/JSON payload (Admin/Manager only).
     Accepts a list of row dicts keyed by column id.
     """
-    result = await service.import_rows(tableId, payload, current_user)
+    result = await service.import_rows(tableId, payload, current_user, page=page)
     return {
         "success": True,
         "message": f"Import complete: {result['inserted']} rows inserted, {len(result['errors'])} errors.",

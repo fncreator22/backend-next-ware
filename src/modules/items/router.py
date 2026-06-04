@@ -60,7 +60,7 @@ async def list_items(
     category: str = Query("", description="Item category filter"),
     warehouse_id: Optional[str] = Query(None, alias="warehouseId", description="Warehouse filter"),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1),
+    limit: int = Query(1000, ge=1, le=5000),
     current_user: dict = Depends(get_current_user),
     service: ItemService = Depends()
 ):
@@ -272,14 +272,14 @@ async def import_items(
             success_count += 1
             
         # Log batch audit trail
-        await service.db.audit_logs.insert_one({
-            "action": "item_import",
-            "description": f"Imported {success_count} inventory items via CSV upload.",
-            "userId": user_id,
-            "userName": current_user["name"],
-            "warehouseId": my_wh,
-            "timestamp": datetime.utcnow()
-        })
+        await service.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="item_import",
+            description=f"Imported {success_count} inventory items via CSV upload.",
+            tenant_id=tenant_id,
+            warehouse_id=my_wh
+        )
         
     return {
         "success": len(errors) == 0 or success_count > 0,

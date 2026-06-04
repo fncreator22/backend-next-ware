@@ -49,7 +49,26 @@ async def websocket_endpoint(
 
     try:
         while True:
-            await websocket.receive_text()
+            msg = await websocket.receive_json()
+            if isinstance(msg, dict):
+                event_type = msg.get("event")
+                if event_type in ("row_lock", "row_unlock"):
+                    table_id = msg.get("tableId")
+                    row_id = msg.get("rowId")
+                    user_name = msg.get("userName", "Someone")
+                    if table_id and row_id:
+                        # Broadcast lock/unlock status to other warehouse and global clients of this tenant
+                        await manager.broadcast_event(
+                            tenant_id=tenant_id,
+                            event_type=event_type,
+                            data={
+                                "tableId": table_id,
+                                "rowId": row_id,
+                                "userId": user_id,
+                                "userName": user_name
+                            },
+                            warehouse_id=warehouse_id
+                        )
     except WebSocketDisconnect:
         logger.info(f"Client disconnected from WebSocket: user={user_id}")
     finally:

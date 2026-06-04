@@ -33,4 +33,5 @@ class TableRowDocument(BaseModel):
     warehouse_id: str
     tenant_id: str
     data: Dict[str, Any]  # Stores custom dynamic values as key-value pairs (key is column id)
+    page_number: int = 1
     created_at: datetime = Field(default_factory=datetime.utcnow)

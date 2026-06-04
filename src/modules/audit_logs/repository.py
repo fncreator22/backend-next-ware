@@ -16,7 +16,7 @@ class AuditLogRepository:
         doc["_id"] = str(res.inserted_id)
         return doc
 
-    async def list_logs(self, query: dict, limit: int = 5000) -> list[dict]:
-        """Query audit log history sorted chronologically by timestamp (descending)."""
-        cursor = self.collection.find(query).sort("timestamp", -1).limit(limit)
+    async def list_logs(self, query: dict, skip: int = 0, limit: int = 100) -> list[dict]:
+        """Query audit log history sorted chronologically by timestamp (descending) with pagination."""
+        cursor = self.collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
         return await cursor.to_list(length=limit)

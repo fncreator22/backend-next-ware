@@ -10,15 +10,30 @@ router = APIRouter(prefix="/audit-logs", tags=["Audit Trails"])
 @router.get("/", response_model=dict)
 async def list_audit_logs(
     warehouse_id: Optional[str] = Query(None, alias="warehouseId"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    action: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     service: AuditLogService = Depends()
 ):
     """Retrieve historical, read-only audit log trails scoped by multi-tenant and role hierarchies."""
-    logs = await service.list_logs(current_user, warehouse_filter=warehouse_id)
-    serialized = [AuditLogResponse.from_doc(l).model_dump(by_alias=True) for l in logs]
+    res = await service.list_logs(
+        current_user=current_user,
+        warehouse_filter=warehouse_id,
+        page=page,
+        limit=limit,
+        search=search,
+        action=action
+    )
+    serialized = [AuditLogResponse.from_doc(l).model_dump(by_alias=True) for l in res["logs"]]
     return {
         "success": True,
         "data": serialized,
+        "total": res["total"],
+        "page": res["page"],
+        "limit": res["limit"],
+        "pages": res["pages"],
         "message": "Audit logs fetched successfully."
     }
 

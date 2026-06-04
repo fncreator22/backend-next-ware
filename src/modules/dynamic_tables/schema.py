@@ -37,6 +37,7 @@ class TableSchemaResponse(BaseModel):
     created_by: str = Field(..., alias="createdBy")
     created_at: str = Field(..., alias="createdAt")
     status: str
+    pages: Optional[List[dict]] = []
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,6 +53,16 @@ class TableSchemaResponse(BaseModel):
         else:
             created_at_str = str(created_at_val)
 
+        pages_raw = doc.get("pages") or []
+        if not pages_raw:
+            pages_raw = [{
+                "page_number": 1,
+                "created_at": created_at_str,
+                "created_by": doc.get("created_by", ""),
+                "permissions": doc.get("roles", []),
+                "storage_usage": 0
+            }]
+
         return cls(
             id=str(doc["_id"]),
             name=doc["name"],
@@ -63,5 +74,6 @@ class TableSchemaResponse(BaseModel):
             headerColor=doc.get("header_color", "#6366f1"),
             createdBy=doc.get("created_by", ""),
             createdAt=created_at_str,
-            status=doc.get("status", "active")
+            status=doc.get("status", "active"),
+            pages=pages_raw
         )

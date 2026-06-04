@@ -14,4 +14,23 @@ class UserDocument(BaseModel):
     tenant_id: str
     avatar: str
     status: str = "active"
+    permission_overrides: Optional[dict] = None
+    table_overrides: Optional[list[str]] = None
+    warehouse_overrides: Optional[list[str]] = None
+    module_overrides: Optional[list[str]] = None
+    employee_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RoleDocument(BaseModel):
+    id: str = Field(..., alias="_id")
+    tenant_id: str
+    name: str
+    description: Optional[str] = ""
+    color: Optional[str] = "#71717a"
+    disabled: Optional[bool] = False
+    permissions: dict
+    page_order: Optional[list[str]] = None
+    module_visibility: Optional[dict] = None
+    feature_access: Optional[dict] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

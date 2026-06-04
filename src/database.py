@@ -42,6 +42,7 @@ async def initialize_indexes():
         # Compound indexing for audit logs (sorted by timestamp descending)
         await db.audit_logs.create_index([("tenant_id", 1), ("timestamp", -1)])
         await db.audit_logs.create_index([("tenant_id", 1), ("warehouse_id", 1), ("timestamp", -1)])
+        await db.audit_logs.create_index([("tenant_id", 1), ("user_id", 1), ("timestamp", -1)])
         
         logger.info("Database unique indexes successfully verified and initialized.")
     except Exception as e:

@@ -7,11 +7,14 @@ from bson import ObjectId
 from bson.decimal128 import Decimal128
 from src.modules.billing.repository import InvoiceRepository
 from src.modules.billing.schema import InvoiceCreate
+from src.modules.billing.tax_engine import TaxEngine
 from src.modules.warehouses.repository import WarehouseRepository
 from src.modules.items.repository import ItemRepository
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
 from src.modules.audit_logs.service import AuditLogService
+from src.modules.trash.service import TrashService
+from src.modules.registry.service import CentralRegistryService, CustomerService
 
 logger = logging.getLogger("wareops_erp.modules.billing.service")
 
@@ -23,13 +26,19 @@ class BillingService:
         warehouse_repo: WarehouseRepository = Depends(),
         item_repo: ItemRepository = Depends(),
         db=Depends(get_db),
-        audit: AuditLogService = Depends()
+        audit: AuditLogService = Depends(),
+        trash: TrashService = Depends(),
+        registry: CentralRegistryService = Depends(),
+        customer_service: CustomerService = Depends()
     ):
         self.repository = repository
         self.warehouse_repo = warehouse_repo
         self.item_repo = item_repo
         self.db = db
         self.audit = audit
+        self.trash = trash
+        self.registry = registry
+        self.customer_service = customer_service
 
     def _convert_decimal128_value(self, val) -> float:
         """Helper to convert BSON Decimal128 fields back to float."""
@@ -65,10 +74,10 @@ class BillingService:
             "luxury": Decimal(str(tax_config.get("luxury", 15.0)))
         }
 
-        # double-check calculations on backend using decimal.Decimal to prevent client tampering
-        computed_subtotal = Decimal("0.0")
-        computed_tax = Decimal("0.0")
-        invoice_items_docs = []
+        tax_rates_decimal = {
+            "normal": Decimal(str(tax_config.get("normal", 5.0))) / Decimal("100"),
+            "luxury": Decimal(str(tax_config.get("luxury", 15.0))) / Decimal("100")
+        }
 
         # Check if database is configured as a replica set supporting transactions
         try:
@@ -111,47 +120,91 @@ class BillingService:
                                 session=session
                             )
 
-                            line_subtotal = Decimal(str(it.price)) * it.qty
-                            line_tax_rate = tax_snapshot.get(it.tax_category, tax_snapshot["normal"]) / 100
-                            line_tax = line_subtotal * line_tax_rate
-
-                            computed_subtotal += line_subtotal
-                            computed_tax += line_tax
-
-                            invoice_items_docs.append({
-                                "item_id": it.item_id,
+                        # Core decimal tax calculations
+                        items_for_engine = []
+                        for it in payload.items:
+                            items_for_engine.append({
+                                "id": it.item_id,
                                 "name": it.name,
                                 "qty": it.qty,
                                 "price": Decimal(str(it.price)),
                                 "tax_category": it.tax_category,
-                                "tax_rate_snapshot": line_tax_rate
+                                "taxes": [t.model_dump() for t in it.taxes] if it.taxes else None
                             })
 
-                        computed_total = computed_subtotal + computed_tax
-                        bill_no = await self.repository.get_next_bill_no(tenant_id)
+                        engine_res = TaxEngine.calculate_taxes(items_for_engine, tax_rates_decimal)
+                        bill_no = await self.registry.get_next_enterprise_id(tenant_id, "INV")
+
+                        # Setup seller defaults from warehouse
+                        wh_email = wh.get("email", "")
+                        wh_contact = wh.get("contact", "")
+                        gstin_fallback = f"27{wh_email.upper()[:3]}C{wh_contact[-4:] if len(wh_contact) >= 4 else '1234'}F1Z5" if wh_email else "27AAPCW1234F1Z5"
 
                         invoice_doc = {
                             "tenant_id": tenant_id,
                             "warehouse_id": wh_id,
                             "bill_no": bill_no,
+                            "enterprise_id": bill_no,
+                            "barcode": bill_no,
                             "customer": payload.customer,
-                            "items": invoice_items_docs,
-                            "subtotal": computed_subtotal,
-                            "tax": computed_tax,
-                            "total": computed_total,
+                            "items": engine_res["items"],
+                            "subtotal": engine_res["subtotal"],
+                            "tax": engine_res["tax"],
+                            "total": engine_res["total"],
                             "tax_config_snapshot": tax_snapshot,
+                            "tax_details": engine_res["tax_details"],
                             "created_by": user_id,
-                            "created_at": datetime.utcnow()
+                            "created_at": datetime.utcnow(),
+                            # Seller info
+                            "seller_address": payload.seller_address or wh.get("address") or "Primary Logistics Hub",
+                            "seller_contact": payload.seller_contact or wh.get("contact") or "Contact Office",
+                            "seller_tax_number": payload.seller_tax_number or wh.get("tax_number") or wh.get("gstin") or gstin_fallback,
+                            # Buyer info
+                            "buyer_billing_address": payload.buyer_billing_address,
+                            "buyer_shipping_address": payload.buyer_shipping_address,
+                            "customer_phone": payload.customer_phone,
+                            "customer_email": payload.customer_email,
+                            # Employee session snapshot
+                            "employee_id": user_id,
+                            "employee_name": current_user.get("name") or "System Creator",
+                            "employee_role": current_user.get("role") or "staff"
                         }
 
                         created = await self.repository.create_invoice(invoice_doc, session=session)
+
+                        # Register in centralized tracking registry
+                        await self.registry.register_entity(
+                            tenant_id=tenant_id,
+                            entity_type="invoice",
+                            entity_id=bill_no,
+                            barcode=bill_no,
+                            warehouse_id=wh_id,
+                            creator_id=user_id,
+                            creator_name=current_user["name"],
+                            snapshot=created
+                        )
+
+                        # Auto CRM repeat customer registration/update
+                        cust_payload = {
+                            "name": payload.customer,
+                            "phone": payload.customer_phone or "",
+                            "email": payload.customer_email or "",
+                            "address": payload.buyer_billing_address or "",
+                            "tax_number": ""
+                        }
+                        await self.customer_service.register_invoice_to_customer(
+                            tenant_id=tenant_id,
+                            customer_payload=cust_payload,
+                            invoice_doc=created,
+                            creator_id=user_id
+                        )
 
                         # Insert audit log inside session
                         await self.audit.log_event(
                             user_id=user_id,
                             user_name=current_user["name"],
                             action="bill_create",
-                            description=f"Bill generated: {bill_no} — ${computed_total}",
+                            description=f"Bill generated: {bill_no} — ${engine_res['total']}",
                             tenant_id=tenant_id,
                             warehouse_id=wh_id,
                             session=session
@@ -208,47 +261,91 @@ class BillingService:
                     )
                     deducted_items.append(item["_id"])
 
-                    line_subtotal = Decimal(str(it.price)) * it.qty
-                    line_tax_rate = tax_snapshot.get(it.tax_category, tax_snapshot["normal"]) / 100
-                    line_tax = line_subtotal * line_tax_rate
-
-                    computed_subtotal += line_subtotal
-                    computed_tax += line_tax
-
-                    invoice_items_docs.append({
-                        "item_id": it.item_id,
+                # Core decimal tax calculations
+                items_for_engine = []
+                for it in payload.items:
+                    items_for_engine.append({
+                        "id": it.item_id,
                         "name": it.name,
                         "qty": it.qty,
                         "price": Decimal(str(it.price)),
                         "tax_category": it.tax_category,
-                        "tax_rate_snapshot": line_tax_rate
+                        "taxes": [t.model_dump() for t in it.taxes] if it.taxes else None
                     })
 
-                computed_total = computed_subtotal + computed_tax
-                bill_no = await self.repository.get_next_bill_no(tenant_id)
+                engine_res = TaxEngine.calculate_taxes(items_for_engine, tax_rates_decimal)
+                bill_no = await self.registry.get_next_enterprise_id(tenant_id, "INV")
+
+                # Setup seller defaults from warehouse
+                wh_email = wh.get("email", "")
+                wh_contact = wh.get("contact", "")
+                gstin_fallback = f"27{wh_email.upper()[:3]}C{wh_contact[-4:] if len(wh_contact) >= 4 else '1234'}F1Z5" if wh_email else "27AAPCW1234F1Z5"
 
                 invoice_doc = {
                     "tenant_id": tenant_id,
                     "warehouse_id": wh_id,
                     "bill_no": bill_no,
+                    "enterprise_id": bill_no,
+                    "barcode": bill_no,
                     "customer": payload.customer,
-                    "items": invoice_items_docs,
-                    "subtotal": computed_subtotal,
-                    "tax": computed_tax,
-                    "total": computed_total,
+                    "items": engine_res["items"],
+                    "subtotal": engine_res["subtotal"],
+                    "tax": engine_res["tax"],
+                    "total": engine_res["total"],
                     "tax_config_snapshot": tax_snapshot,
+                    "tax_details": engine_res["tax_details"],
                     "created_by": user_id,
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.utcnow(),
+                    # Seller info
+                    "seller_address": payload.seller_address or wh.get("address") or "Primary Logistics Hub",
+                    "seller_contact": payload.seller_contact or wh.get("contact") or "Contact Office",
+                    "seller_tax_number": payload.seller_tax_number or wh.get("tax_number") or wh.get("gstin") or gstin_fallback,
+                    # Buyer info
+                    "buyer_billing_address": payload.buyer_billing_address,
+                    "buyer_shipping_address": payload.buyer_shipping_address,
+                    "customer_phone": payload.customer_phone,
+                    "customer_email": payload.customer_email,
+                    # Employee session snapshot
+                    "employee_id": user_id,
+                    "employee_name": current_user.get("name") or "System Creator",
+                    "employee_role": current_user.get("role") or "staff"
                 }
 
                 created = await self.repository.create_invoice(invoice_doc, session=None)
+
+                # Register in centralized tracking registry
+                await self.registry.register_entity(
+                    tenant_id=tenant_id,
+                    entity_type="invoice",
+                    entity_id=bill_no,
+                    barcode=bill_no,
+                    warehouse_id=wh_id,
+                    creator_id=user_id,
+                    creator_name=current_user["name"],
+                    snapshot=created
+                )
+
+                # Auto CRM repeat customer registration/update
+                cust_payload = {
+                    "name": payload.customer,
+                    "phone": payload.customer_phone or "",
+                    "email": payload.customer_email or "",
+                    "address": payload.buyer_billing_address or "",
+                    "tax_number": ""
+                }
+                await self.customer_service.register_invoice_to_customer(
+                    tenant_id=tenant_id,
+                    customer_payload=cust_payload,
+                    invoice_doc=created,
+                    creator_id=user_id
+                )
 
                 # Insert audit log
                 await self.audit.log_event(
                     user_id=user_id,
                     user_name=current_user["name"],
                     action="bill_create",
-                    description=f"Bill generated: {bill_no} — ${computed_total}",
+                    description=f"Bill generated: {bill_no} — ${engine_res['total']}",
                     tenant_id=tenant_id,
                     warehouse_id=wh_id
                 )
@@ -512,3 +609,62 @@ class BillingService:
                 "invoiceCount": perf["invoice_count"]
             })
         return performance
+
+    async def delete_invoice(self, invoice_id: str, current_user: dict) -> bool:
+        """Soft delete invoice registry and archive in recovery trash bin (super_admin or admin only)."""
+        role = current_user["role"]
+        tenant_id = current_user["tenant_id"]
+        user_id = str(current_user.get("_id") or current_user.get("id"))
+
+        # Privilege Check: Only super_admin and admin can delete invoices
+        if role not in ["super_admin", "admin"]:
+            raise PermissionException("Unauthorized: Only Super Admins and Admins can delete invoices.")
+
+        bill = await self.repository.find_by_id(invoice_id, tenant_id)
+        if not bill:
+            raise NotFoundException("Invoice not found.")
+
+        # Scoping Check: Non-super_admins can only delete invoices inside their assigned warehouse
+        if role != "super_admin" and bill["warehouse_id"] != current_user.get("warehouse_id"):
+            raise PermissionException("Unauthorized: You do not have permissions to delete invoices in this warehouse.")
+
+        # Snapshot data for recovery bin
+        bill_data = dict(bill)
+        if "created_at" in bill_data and isinstance(bill_data["created_at"], datetime):
+            bill_data["created_at"] = bill_data["created_at"].isoformat()
+        # Avoid Decimal128 serialization issue
+        if "subtotal" in bill_data:
+            bill_data["subtotal"] = self._convert_decimal128_value(bill_data["subtotal"])
+        if "tax" in bill_data:
+            bill_data["tax"] = self._convert_decimal128_value(bill_data["tax"])
+        if "total" in bill_data:
+            bill_data["total"] = self._convert_decimal128_value(bill_data["total"])
+        for it in bill_data.get("items", []):
+            if "price" in it:
+                it["price"] = float(it["price"])
+            if "tax_rate_snapshot" in it:
+                it["tax_rate_snapshot"] = float(it["tax_rate_snapshot"])
+
+        # Soft-delete snapshot
+        await self.trash.soft_delete(
+            doc_id=invoice_id,
+            original_collection="bills",
+            tenant_id=tenant_id,
+            deleted_by=user_id,
+            data=bill_data
+        )
+
+        # Erase from main registry
+        await self.repository.collection.delete_one({"_id": invoice_id, "tenant_id": tenant_id})
+
+        # Log audit operation
+        await self.audit.log_event(
+            user_id=user_id,
+            user_name=current_user["name"],
+            action="invoice_delete",
+            description=f"Deleted invoice: '{bill['bill_no']}' for customer '{bill['customer']}'",
+            tenant_id=tenant_id,
+            warehouse_id=bill["warehouse_id"]
+        )
+
+        return True

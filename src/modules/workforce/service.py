@@ -9,6 +9,8 @@ from src.middleware.exceptions import PermissionException, NotFoundException, Va
 from src.database import get_db
 from src.utils.email import send_invitation_email
 from src.modules.audit_logs.service import AuditLogService
+from src.modules.trash.service import TrashService
+from src.modules.registry.service import CentralRegistryService
 
 logger = logging.getLogger("wareops_erp.modules.workforce.service")
 
@@ -23,10 +25,19 @@ ROLE_LEVELS = {
 
 
 class WorkforceService:
-    def __init__(self, repository: WorkforceRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
+    def __init__(
+        self,
+        repository: WorkforceRepository = Depends(),
+        db=Depends(get_db),
+        audit: AuditLogService = Depends(),
+        trash: TrashService = Depends(),
+        registry: CentralRegistryService = Depends()
+    ):
         self.repository = repository
         self.db = db
         self.audit = audit
+        self.trash = trash
+        self.registry = registry
 
     async def list_workforce(self, current_user: dict) -> list[dict]:
         """Fetch workforce members scoped to tenant, warehouse access, and role hierarchy bounds."""
@@ -81,10 +92,16 @@ class WorkforceService:
         # 3. Create document fields
         hashed_pw = hash_password(payload.password)
         name_parts = payload.name.split()
-        avatar = "".join([n[0] for n in name_parts]).upper()[:2] if name_parts else "US"
+        avatar = payload.avatar if payload.avatar else ("".join([n[0] for n in name_parts]).upper()[:2] if name_parts else "US")
+        tenant_id = current_user["tenant_id"]
+
+        # Atomic enterprise ID + barcode assignment
+        enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "EMP")
 
         member_doc = {
-            "tenant_id": current_user["tenant_id"],
+            "tenant_id": tenant_id,
+            "enterprise_id": enterprise_id,
+            "barcode": enterprise_id,
             "name": payload.name,
             "email": payload.email.lower(),
             "hashed_password": hashed_pw,
@@ -94,10 +111,27 @@ class WorkforceService:
             "status": "active",
             "assignedBy": user_id,
             "assignedAt": datetime.utcnow(),
+            "permission_overrides": payload.permission_overrides,
+            "table_overrides": payload.table_overrides,
+            "warehouse_overrides": payload.warehouse_overrides,
+            "module_overrides": payload.module_overrides,
+            "employee_id": payload.employee_id or enterprise_id,
             "created_at": datetime.utcnow()
         }
 
         created = await self.repository.create_member(member_doc)
+
+        # Register employee in centralized ledger registry
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="employee",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=payload.warehouse_id,
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=created
+        )
 
         # Retrieve warehouse details for rich email invitation text
         try:
@@ -196,12 +230,32 @@ class WorkforceService:
 
         updated = await self.repository.update_member(member_id, update_data)
 
+        # Snapshot update logic scoped inside Central Registry
+        enterprise_id = updated.get("enterprise_id")
+        if not enterprise_id:
+            # Backward compatibility fallback
+            enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "EMP")
+            await self.repository.update_member(member_id, {"enterprise_id": enterprise_id, "barcode": enterprise_id})
+            updated["enterprise_id"] = enterprise_id
+            updated["barcode"] = enterprise_id
+
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="employee",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=updated.get("warehouse_id"),
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=updated
+        )
+
         # 3. Log audit trail
         await self.audit.log_event(
             user_id=str(user_id),
             user_name=current_user["name"],
             action="user_update",
-            description=f"User profile updated: '{target['name']}' details modified.",
+            description=f"User profile updated: '{target['name']}' details modified. (ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=target.get("warehouse_id")
         )
@@ -244,7 +298,21 @@ class WorkforceService:
             if target.get("warehouse_id") != current_user["warehouse_id"]:
                 raise PermissionException("Unauthorized: Target belongs to another warehouse.")
 
-        # 2. Execute deletion
+        # 2. Snapshot workforce member for recovery bin
+        target_data = dict(target)
+        if "created_at" in target_data and isinstance(target_data["created_at"], datetime):
+            target_data["created_at"] = target_data["created_at"].isoformat()
+        
+        # Soft-delete snapshot
+        await self.trash.soft_delete(
+            doc_id=member_id,
+            original_collection="users",
+            tenant_id=tenant_id,
+            deleted_by=str(user_id),
+            data=target_data
+        )
+
+        # 3. Execute deletion
         await self.repository.delete_member(member_id)
 
         # 3. Log audit trail

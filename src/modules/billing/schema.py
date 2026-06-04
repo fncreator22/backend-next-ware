@@ -4,6 +4,17 @@ from typing import List, Optional
 from datetime import datetime
 
 
+class TaxDetailCreate(BaseModel):
+    name: str
+    tax_type: str = Field("percentage", alias="taxType")
+    rate: Decimal
+    amount: Decimal
+
+    model_config = ConfigDict(
+        populate_by_name=True
+    )
+
+
 class InvoiceItemCreate(BaseModel):
     item_id: str = Field(..., alias="id")
     name: str
@@ -11,6 +22,7 @@ class InvoiceItemCreate(BaseModel):
     tax_category: str = Field(..., alias="taxCategory")
     tax_rate: Decimal = Field(..., alias="taxRate")
     qty: int = Field(..., gt=0)
+    taxes: Optional[List[TaxDetailCreate]] = None
 
     model_config = ConfigDict(
         populate_by_name=True
@@ -24,9 +36,34 @@ class InvoiceCreate(BaseModel):
     subtotal: Decimal = Field(..., ge=0)
     tax: Decimal = Field(..., ge=0)
     total: Decimal = Field(..., ge=0)
+    tax_details: Optional[List[TaxDetailCreate]] = Field(None, alias="taxDetails")
+    
+    # New billing & corporate fields
+    seller_address: Optional[str] = Field(None, alias="sellerAddress")
+    seller_contact: Optional[str] = Field(None, alias="sellerContact")
+    seller_tax_number: Optional[str] = Field(None, alias="sellerTaxNumber")
+    buyer_billing_address: Optional[str] = Field(None, alias="buyerBillingAddress")
+    buyer_shipping_address: Optional[str] = Field(None, alias="buyerShippingAddress")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    employee_id: Optional[str] = Field(None, alias="employeeId")
+    employee_name: Optional[str] = Field(None, alias="employeeName")
+    employee_role: Optional[str] = Field(None, alias="employeeRole")
 
     model_config = ConfigDict(
         populate_by_name=True
+    )
+
+
+class TaxDetailResponse(BaseModel):
+    name: str
+    tax_type: str = Field(..., alias="taxType")
+    rate: float
+    amount: float
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True
     )
 
 
@@ -37,6 +74,7 @@ class InvoiceItemResponse(BaseModel):
     price: float
     tax_category: str = Field(..., alias="taxCategory")
     tax_rate_snapshot: float = Field(..., alias="taxRate")
+    taxes: Optional[List[TaxDetailResponse]] = None
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -63,9 +101,22 @@ class InvoiceResponse(BaseModel):
     subtotal: float
     tax: float
     total: float
-    tax_config_snapshot: TaxConfigSnapshotResponse = Field(..., alias="taxConfigSnapshot")
+    tax_config_snapshot: Optional[TaxConfigSnapshotResponse] = Field(None, alias="taxConfigSnapshot")
+    tax_details: Optional[List[TaxDetailResponse]] = Field(None, alias="taxDetails")
     created_by: str = Field(..., alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
+
+    # New corporate and metadata fields
+    seller_address: Optional[str] = Field(None, alias="sellerAddress")
+    seller_contact: Optional[str] = Field(None, alias="sellerContact")
+    seller_tax_number: Optional[str] = Field(None, alias="sellerTaxNumber")
+    buyer_billing_address: Optional[str] = Field(None, alias="buyerBillingAddress")
+    buyer_shipping_address: Optional[str] = Field(None, alias="buyerShippingAddress")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    employee_id: Optional[str] = Field(None, alias="employeeId")
+    employee_name: Optional[str] = Field(None, alias="employeeName")
+    employee_role: Optional[str] = Field(None, alias="employeeRole")
 
     @model_validator(mode="before")
     @classmethod
@@ -86,6 +137,28 @@ class InvoiceResponse(BaseModel):
                 data["createdAt"] = data["created_at"]
             if "taxConfigSnapshot" not in data and "tax_config_snapshot" in data:
                 data["taxConfigSnapshot"] = data["tax_config_snapshot"]
+            if "taxDetails" not in data and "tax_details" in data:
+                data["taxDetails"] = data["tax_details"]
+                if isinstance(data["taxDetails"], list):
+                    for t in data["taxDetails"]:
+                        if isinstance(t, dict):
+                            if "taxType" not in t and "tax_type" in t:
+                                t["taxType"] = t["tax_type"]
+            # Map new corporate and metadata fields
+            for camel, snake in [
+                ("sellerAddress", "seller_address"),
+                ("sellerContact", "seller_contact"),
+                ("sellerTaxNumber", "seller_tax_number"),
+                ("buyerBillingAddress", "buyer_billing_address"),
+                ("buyerShippingAddress", "buyer_shipping_address"),
+                ("customerPhone", "customer_phone"),
+                ("customerEmail", "customer_email"),
+                ("employeeId", "employee_id"),
+                ("employeeName", "employee_name"),
+                ("employeeRole", "employee_role"),
+            ]:
+                if camel not in data and snake in data:
+                    data[camel] = data[snake]
             # Map items: tax_category -> taxCategory, tax_rate_snapshot -> taxRate
             if "items" in data and isinstance(data["items"], list):
                 for item in data["items"]:
@@ -96,6 +169,11 @@ class InvoiceResponse(BaseModel):
                             item["taxCategory"] = item["tax_category"]
                         if "taxRate" not in item and "tax_rate_snapshot" in item:
                             item["taxRate"] = item["tax_rate_snapshot"]
+                        if "taxes" in item and isinstance(item["taxes"], list):
+                            for t in item["taxes"]:
+                                if isinstance(t, dict):
+                                    if "taxType" not in t and "tax_type" in t:
+                                        t["taxType"] = t["tax_type"]
         return data
 
     model_config = ConfigDict(

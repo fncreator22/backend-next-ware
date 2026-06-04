@@ -7,16 +7,27 @@ from src.modules.warehouses.schema import WarehouseCreate, WarehouseUpdate
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
 from src.modules.audit_logs.service import AuditLogService
+from src.modules.trash.service import TrashService
 from src.utils.email import send_warehouse_creation_email
+from src.modules.registry.service import CentralRegistryService
 
 logger = logging.getLogger("wareops_erp.modules.warehouses.service")
 
 
 class WarehouseService:
-    def __init__(self, repository: WarehouseRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
+    def __init__(
+        self,
+        repository: WarehouseRepository = Depends(),
+        db=Depends(get_db),
+        audit: AuditLogService = Depends(),
+        trash: TrashService = Depends(),
+        registry: CentralRegistryService = Depends()
+    ):
         self.repository = repository
         self.db = db
         self.audit = audit
+        self.trash = trash
+        self.registry = registry
 
     async def list_warehouses(self, current_user: dict) -> list[dict]:
         """List warehouses scoped dynamically based on active user privileges."""
@@ -61,9 +72,15 @@ class WarehouseService:
             tax_config = {}
 
         user_id = current_user.get("_id") or current_user.get("id")
+        tenant_id = current_user["tenant_id"]
+
+        # Atomic enterprise ID + barcode assignment
+        enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "WH")
 
         wh_doc = {
-            "tenant_id": current_user["tenant_id"],
+            "tenant_id": tenant_id,
+            "enterprise_id": enterprise_id,
+            "barcode": enterprise_id,
             "ownerId": user_id,
             "name": payload.name,
             "businessName": payload.businessName,
@@ -79,14 +96,26 @@ class WarehouseService:
         }
 
         created = await self.repository.create_warehouse(wh_doc)
+
+        # Register warehouse in centralized ledger registry
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="warehouse",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=str(created["_id"]),
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=created
+        )
         
         # Append to audit logs dynamically
         await self.audit.log_event(
             user_id=str(user_id),
             user_name=current_user["name"],
             action="warehouse_create",
-            description=f"Warehouse created: '{payload.name}'",
-            tenant_id=current_user["tenant_id"],
+            description=f"Warehouse created: '{payload.name}' (ID: {enterprise_id})",
+            tenant_id=tenant_id,
             warehouse_id=str(created["_id"])
         )
 
@@ -126,12 +155,32 @@ class WarehouseService:
 
         updated = await self.repository.update_warehouse(warehouse_id, update_data)
 
+        # Snapshot update logic scoped inside Central Registry
+        enterprise_id = updated.get("enterprise_id")
+        if not enterprise_id:
+            # Backward compatibility fallback
+            enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "WH")
+            await self.repository.update_warehouse(warehouse_id, {"enterprise_id": enterprise_id, "barcode": enterprise_id})
+            updated["enterprise_id"] = enterprise_id
+            updated["barcode"] = enterprise_id
+
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="warehouse",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=warehouse_id,
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=updated
+        )
+
         # Log audit operation
         await self.audit.log_event(
             user_id=str(user_id),
             user_name=current_user["name"],
             action="warehouse_update",
-            description=f"Warehouse updated: '{wh['name']}' details modified.",
+            description=f"Warehouse updated: '{wh['name']}' details modified. (ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=warehouse_id
         )
@@ -140,6 +189,20 @@ class WarehouseService:
 
     async def _execute_cascade_deletes(self, warehouse_id: str, user_id: str, warehouse_name: str, tenant_id: str, session=None):
         """Execute all core deletions across collections sequentially."""
+        # 0. Snapshot warehouse document for recovery bin
+        wh = await self.db.warehouses.find_one({"_id": warehouse_id, "tenant_id": tenant_id}, session=session)
+        if wh:
+            wh_data = dict(wh)
+            if "created_at" in wh_data and isinstance(wh_data["created_at"], datetime):
+                wh_data["created_at"] = wh_data["created_at"].isoformat()
+            await self.trash.soft_delete(
+                doc_id=warehouse_id,
+                original_collection="warehouses",
+                tenant_id=tenant_id,
+                deleted_by=str(user_id),
+                data=wh_data
+            )
+
         # 1. Remove the warehouse itself
         await self.db.warehouses.delete_one({"_id": warehouse_id}, session=session)
         

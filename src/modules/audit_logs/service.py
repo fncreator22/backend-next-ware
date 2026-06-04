@@ -48,11 +48,21 @@ class AuditLogService:
             
         return log
 
-    async def list_logs(self, current_user: dict, warehouse_filter: Optional[str] = None) -> List[dict]:
-        """Fetch audit log history matching tenant scoping and strict hierarchical role permissions."""
+    async def list_logs(
+        self,
+        current_user: dict,
+        warehouse_filter: Optional[str] = None,
+        page: int = 1,
+        limit: int = 100,
+        search: Optional[str] = None,
+        action: Optional[str] = None
+    ) -> dict:
+        """Fetch audit log history matching tenant scoping, pagination, and strict hierarchical role permissions."""
+        import math
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
         user_id = str(current_user.get("_id") or current_user.get("id", ""))
+        warehouse_id = current_user.get("warehouse_id")
 
         # Base query scopes per tenant
         query = {"tenant_id": tenant_id}
@@ -61,35 +71,65 @@ class AuditLogService:
             # Super Admin can see all logs under tenant
             if warehouse_filter:
                 query["warehouse_id"] = warehouse_filter
-        else:
-            # Other roles are locked into their assigned warehouse location
-            warehouse_id = current_user.get("warehouse_id")
-            query["warehouse_id"] = warehouse_id
-
-            # Enforce dynamic upward role scoping reflection (Manager sees Staff, Employee sees only Employee/Self)
-            levels = {"employee": 1, "staff": 2, "manager": 3, "admin": 4, "super_admin": 5}
-            caller_level = levels.get(role, 1)
-
-            # Query all active users in the same warehouse
+        elif role == "admin":
+            # Admin -> admin/manager/staff under the same warehouse
+            if warehouse_id:
+                query["warehouse_id"] = warehouse_id
+            visible_roles = ["admin", "manager", "staff"]
             users_cursor = self.repo.db.users.find({
+                "tenant_id": tenant_id,
                 "warehouse_id": warehouse_id,
-                "tenant_id": tenant_id
+                "role": {"$in": visible_roles}
             })
             users = await users_cursor.to_list(length=1000)
-
-            # Filter visible user IDs
-            visible_user_ids = []
-            for u in users:
-                u_role = u.get("role", "employee")
-                if levels.get(u_role, 1) <= caller_level:
-                    visible_user_ids.append(str(u["_id"]))
-
-            # Always include caller's own logs
+            visible_user_ids = [str(u["_id"]) for u in users]
             if user_id not in visible_user_ids:
                 visible_user_ids.append(user_id)
-
-            # Scope query by these visible user IDs
             query["user_id"] = {"$in": visible_user_ids}
+        elif role == "manager":
+            # Manager -> manager/staff under the same warehouse
+            if warehouse_id:
+                query["warehouse_id"] = warehouse_id
+            visible_roles = ["manager", "staff"]
+            users_cursor = self.repo.db.users.find({
+                "tenant_id": tenant_id,
+                "warehouse_id": warehouse_id,
+                "role": {"$in": visible_roles}
+            })
+            users = await users_cursor.to_list(length=1000)
+            visible_user_ids = [str(u["_id"]) for u in users]
+            if user_id not in visible_user_ids:
+                visible_user_ids.append(user_id)
+            query["user_id"] = {"$in": visible_user_ids}
+        else:
+            # Staff & other roles -> own logs only
+            if warehouse_id:
+                query["warehouse_id"] = warehouse_id
+            query["user_id"] = user_id
 
-        logs = await self.repo.list_logs(query)
-        return logs
+        # Apply action filter
+        if action:
+            query["action"] = action
+
+        # Apply search filter (description, user_name, or action)
+        if search:
+            query["$or"] = [
+                {"description": {"$regex": search, "$options": "i"}},
+                {"user_name": {"$regex": search, "$options": "i"}},
+                {"action": {"$regex": search, "$options": "i"}}
+            ]
+
+        # Count total matching documents for pagination
+        total = await self.repo.collection.count_documents(query)
+
+        # Pagination offsets
+        skip = (page - 1) * limit
+        logs = await self.repo.list_logs(query, skip=skip, limit=limit)
+
+        return {
+            "logs": logs,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": math.ceil(total / limit) if limit > 0 else 1
+        }

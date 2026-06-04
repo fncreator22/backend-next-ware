@@ -9,6 +9,10 @@ from src.modules.audit_logs.service import AuditLogService
 from src.middleware.exceptions import ValidationException, PermissionException, NotFoundException
 from src.modules.realtime.websocket_manager import manager
 
+from src.modules.audit_logs.service import AuditLogService
+from src.modules.trash.service import TrashService
+from src.modules.registry.service import CentralRegistryService
+
 logger = logging.getLogger("wareops_erp.modules.dynamic_tables.service")
 
 
@@ -16,10 +20,14 @@ class DynamicTableService:
     def __init__(
         self,
         repository: DynamicTableRepository = Depends(),
-        audit_service: AuditLogService = Depends()
+        audit_service: AuditLogService = Depends(),
+        trash_service: TrashService = Depends(),
+        registry: CentralRegistryService = Depends()
     ):
         self.repo = repository
         self.audit = audit_service
+        self.trash = trash_service
+        self.registry = registry
 
     # --- SCHEMAS BUSINESS LOGIC ---
 
@@ -72,6 +80,9 @@ class DynamicTableService:
                 required=c.required
             ))
 
+        # Atomic enterprise ID + barcode assignment
+        enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "TBL")
+
         doc = TableSchemaDocument(
             name=payload.name,
             table_name=payload.name,
@@ -87,14 +98,31 @@ class DynamicTableService:
             status="active"
         )
 
-        schema = await self.repo.create_schema(doc.model_dump(by_alias=True, exclude_none=True))
+        # Merge enterprise tracking parameters
+        schema_dict = doc.model_dump(by_alias=True, exclude_none=True)
+        schema_dict["enterprise_id"] = enterprise_id
+        schema_dict["barcode"] = enterprise_id
+
+        schema = await self.repo.create_schema(schema_dict)
+
+        # Register dynamic custom table in centralized tracking registry
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="table_registry",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=warehouse_id,
+            creator_id=str(current_user["_id"]),
+            creator_name=current_user["name"],
+            snapshot=schema
+        )
 
         wh_name = warehouse_id if warehouse_id else "Global"
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
             user_name=current_user["name"],
             action="table_schema_create",
-            description=f"Created custom table schema: {payload.name} (Scope: {wh_name})",
+            description=f"Created custom table schema: {payload.name} (Scope: {wh_name}, ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=warehouse_id
         )
@@ -141,11 +169,31 @@ class DynamicTableService:
 
         updated = await self.repo.update_schema(table_id, tenant_id, update_data)
 
+        # Snapshot update logic scoped inside Central Registry
+        enterprise_id = updated.get("enterprise_id")
+        if not enterprise_id:
+            # Backward compatibility fallback
+            enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "TBL")
+            await self.repo.update_schema(table_id, tenant_id, {"enterprise_id": enterprise_id, "barcode": enterprise_id})
+            updated["enterprise_id"] = enterprise_id
+            updated["barcode"] = enterprise_id
+
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="table_registry",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=schema.get("warehouse_id"),
+            creator_id=str(current_user["_id"]),
+            creator_name=current_user["name"],
+            snapshot=updated
+        )
+
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
             user_name=current_user["name"],
             action="table_schema_update",
-            description=f"Updated custom table schema: {payload.name}",
+            description=f"Updated custom table schema: {payload.name} (ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=schema.get("warehouse_id")
         )
@@ -166,6 +214,23 @@ class DynamicTableService:
 
         rows_deleted = await self.repo.delete_all_rows_for_table(table_id, tenant_id)
         logger.info(f"Cascaded delete cleared {rows_deleted} row documents for table_id: {table_id}")
+
+        # Move schema to trash before deleting
+        schema_data = dict(schema)
+        if "_id" in schema_data:
+            schema_data["_id"] = str(schema_data["_id"])
+        if "created_at" in schema_data and isinstance(schema_data["created_at"], datetime):
+            schema_data["created_at"] = schema_data["created_at"].isoformat()
+        if "updated_at" in schema_data and isinstance(schema_data["updated_at"], datetime):
+            schema_data["updated_at"] = schema_data["updated_at"].isoformat()
+
+        await self.trash.soft_delete(
+            doc_id=table_id,
+            original_collection="table_schemas",
+            tenant_id=tenant_id,
+            deleted_by=str(current_user["_id"]),
+            data=schema_data
+        )
 
         res = await self.repo.delete_schema(table_id, tenant_id)
 
@@ -189,19 +254,24 @@ class DynamicTableService:
 
     # --- TABLE ROWS BUSINESS LOGIC ---
 
-    async def list_rows(self, table_id: str, current_user: dict) -> List[dict]:
-        """Fetch custom row documents from MongoDB collections matching isolation scopes."""
+    async def list_rows(self, table_id: str, current_user: dict, page: int = 1) -> List[dict]:
+        """Fetch custom row documents from MongoDB collections matching isolation scopes and page number."""
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
-        rows = await self.repo.list_rows_by_table(table_id, current_user["tenant_id"])
+        rows = await self.repo.list_rows_by_table_and_page(table_id, page, current_user["tenant_id"])
         flattened = [self._flatten_row(r) for r in rows]
         return flattened
 
-    async def append_row(self, table_id: str, row_data: Dict[str, Any], current_user: dict) -> dict:
+    async def append_row(self, table_id: str, row_data: Dict[str, Any], current_user: dict, page: int = 1) -> dict:
         """Append validated custom row documents into database collections."""
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
+
+        # Enforce 100-row limit per page
+        existing_rows = await self.repo.list_rows_by_table_and_page(table_id, page, current_user["tenant_id"])
+        if len(existing_rows) >= 100:
+            raise ValidationException("This page has reached its maximum capacity of 100 rows.")
 
         validated_data = self.validate_row_against_schema(schema, row_data)
 
@@ -210,11 +280,24 @@ class DynamicTableService:
             warehouse_id=schema.get("warehouse_id") or current_user.get("warehouse_id") or "Global",
             tenant_id=current_user["tenant_id"],
             data=validated_data,
+            page_number=page,
             created_at=datetime.utcnow()
         )
 
         row = await self.repo.create_row(doc.model_dump(by_alias=True, exclude_none=True))
         flat = self._flatten_row(row)
+
+        await self.update_page_storage(table_id, page, current_user["tenant_id"])
+
+        # Log audit trail
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_row_create",
+            description=f"Added new row in table '{schema['name']}' (Page {page})",
+            tenant_id=current_user["tenant_id"],
+            warehouse_id=schema.get("warehouse_id")
+        )
 
         # Broadcast row insertion to all connected collaborators on this table
         await manager.broadcast_event(
@@ -241,9 +324,22 @@ class DynamicTableService:
         if not row or row["table_id"] != table_id:
             raise NotFoundException("Row document not found in this table.")
 
+        page = row.get("page_number", 1)
         validated_data = self.validate_row_against_schema(schema, row_data)
         updated_row = await self.repo.update_row(row_id, tenant_id, validated_data)
         flat = self._flatten_row(updated_row)
+
+        await self.update_page_storage(table_id, page, tenant_id)
+
+        # Log audit trail
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_row_update",
+            description=f"Updated row {row_id} in table '{schema['name']}' (Page {page})",
+            tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
 
         # Broadcast row update to collaborators
         await manager.broadcast_event(
@@ -271,7 +367,37 @@ class DynamicTableService:
         if not row or row["table_id"] != table_id:
             raise NotFoundException("Row document not found in this table.")
 
+        page = row.get("page_number", 1)
+        # Move row to trash before deleting
+        row_data = dict(row)
+        if "_id" in row_data:
+            row_data["_id"] = str(row_data["_id"])
+        if "created_at" in row_data and isinstance(row_data["created_at"], datetime):
+            row_data["created_at"] = row_data["created_at"].isoformat()
+        if "updated_at" in row_data and isinstance(row_data["updated_at"], datetime):
+            row_data["updated_at"] = row_data["updated_at"].isoformat()
+
+        await self.trash.soft_delete(
+            doc_id=row_id,
+            original_collection="table_rows",
+            tenant_id=tenant_id,
+            deleted_by=str(current_user["_id"]),
+            data=row_data
+        )
+
         res = await self.repo.delete_row(row_id, tenant_id)
+        if res:
+            await self.update_page_storage(table_id, page, tenant_id)
+
+        # Log audit trail
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_row_delete",
+            description=f"Deleted row {row_id} in table '{schema['name']}' (Page {page})",
+            tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
 
         # Broadcast row deletion
         await manager.broadcast_event(
@@ -288,18 +414,24 @@ class DynamicTableService:
 
         return res
 
-    async def import_rows(self, table_id: str, rows_data: List[Dict[str, Any]], current_user: dict) -> dict:
-        """Bulk import multiple rows into a custom table (admin/manager only)."""
+    async def import_rows(self, table_id: str, rows_data: List[Dict[str, Any]], current_user: dict, page: int = 1) -> dict:
+        """Bulk import multiple rows into a custom table page (admin/manager only)."""
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
         tenant_id = current_user["tenant_id"]
         warehouse_id = schema.get("warehouse_id") or current_user.get("warehouse_id") or "Global"
 
+        existing_rows = await self.repo.list_rows_by_table_and_page(table_id, page, tenant_id)
+        current_count = len(existing_rows)
+
         inserted = 0
         errors = []
 
         for i, row_data in enumerate(rows_data):
+            if current_count >= 100:
+                errors.append({"row": i + 1, "error": "This page has reached its maximum capacity of 100 rows."})
+                continue
             try:
                 validated_data = self.validate_row_against_schema(schema, row_data)
                 doc = TableRowDocument(
@@ -307,19 +439,24 @@ class DynamicTableService:
                     warehouse_id=warehouse_id,
                     tenant_id=tenant_id,
                     data=validated_data,
+                    page_number=page,
                     created_at=datetime.utcnow()
                 )
                 await self.repo.create_row(doc.model_dump(by_alias=True, exclude_none=True))
                 inserted += 1
+                current_count += 1
             except Exception as e:
                 errors.append({"row": i + 1, "error": str(e)})
+
+        if inserted > 0:
+            await self.update_page_storage(table_id, page, tenant_id)
 
         # Audit the bulk import
         await self.audit.log_event(
             user_id=str(current_user["_id"]),
             user_name=current_user["name"],
             action="table_rows_import",
-            description=f"Bulk imported {inserted} rows into table '{schema['name']}' ({len(errors)} errors)",
+            description=f"Bulk imported {inserted} rows into table '{schema['name']}' page {page} ({len(errors)} errors)",
             tenant_id=tenant_id,
             warehouse_id=warehouse_id
         )
@@ -328,7 +465,13 @@ class DynamicTableService:
         await manager.broadcast_event(
             tenant_id=tenant_id,
             event_type="table_rows_imported",
-            data={"tableId": table_id, "inserted": inserted, "actorName": current_user.get("name", "Unknown")},
+            data={
+                "tableId": table_id,
+                "page": page,
+                "inserted": inserted,
+                "actorName": current_user.get("name", "Unknown"),
+                "actorId": str(current_user["_id"])
+            },
             warehouse_id=warehouse_id
         )
 
@@ -373,18 +516,23 @@ class DynamicTableService:
 
             if val is not None and val != "":
                 if col_type == "dropdown":
-                    # FIX: Properly parse and normalize dropdown options
+                    # FIX: Properly parse and normalize dropdown options case-insensitively
                     raw_options = col.get("options") or ""
                     allowed_opts = [o.strip() for o in raw_options.split(",") if o.strip()]
                     if allowed_opts:
                         normalized_val = str(val).strip()
-                        if normalized_val not in allowed_opts:
+                        matched_opt = None
+                        for opt in allowed_opts:
+                            if opt.lower() == normalized_val.lower():
+                                matched_opt = opt
+                                break
+                        if not matched_opt:
                             raise ValidationException(
                                 f"Value '{normalized_val}' is not a valid option for dropdown column '{col['name']}'. "
                                 f"Allowed values: {allowed_opts}"
                             )
-                        # Replace the validated_dict value with the normalized (stripped) version
-                        validated_dict[col_id] = normalized_val
+                        # Replace the validated_dict value with the normalized matched option (exact case)
+                        validated_dict[col_id] = matched_opt
                 elif col_type == "status":
                     allowed_status = ["Todo", "In Progress", "Done"]
                     normalized_val = str(val).strip()
@@ -421,7 +569,115 @@ class DynamicTableService:
             "tableId": row_doc["table_id"],
             "warehouseId": row_doc["warehouse_id"],
             "tenantId": row_doc["tenant_id"],
+            "pageNumber": row_doc.get("page_number", 1),
             "createdAt": row_doc["created_at"].isoformat() if isinstance(row_doc["created_at"], datetime) else str(row_doc["created_at"])
         }
         res.update(row_doc.get("data", {}))
         return res
+
+    async def get_tenant_page_limit(self, tenant_id: str) -> int:
+        """Scalable architecture to query tenant subscription details and returns table page limits."""
+        tenant = await self.repo.db.tenants.find_one({"_id": tenant_id})
+        plan = tenant.get("plan", "starter") if tenant else "enterprise"
+        if plan == "starter":
+            return 2
+        return 50
+
+    async def update_page_storage(self, table_id: str, page_number: int, tenant_id: str):
+        """Recompute dynamic JSON storage usage metadata for a specific table page and persist it."""
+        schema = await self.repo.find_schema_by_id(table_id, tenant_id)
+        if not schema:
+            return
+
+        pages = schema.get("pages") or []
+        if not pages:
+            created_at_val = schema.get("created_at")
+            created_at_str = created_at_val.isoformat() if isinstance(created_at_val, datetime) else str(created_at_val)
+            pages = [{
+                "page_number": 1,
+                "created_at": created_at_str,
+                "created_by": schema.get("created_by", ""),
+                "permissions": schema.get("roles", []),
+                "storage_usage": 0
+            }]
+
+        rows = await self.repo.list_rows_by_table_and_page(table_id, page_number, tenant_id)
+        # Dynamic storage estimate by summing stringified data values
+        storage = sum(len(str(r.get("data", {}))) for r in rows)
+
+        found = False
+        for p in pages:
+            if p.get("page_number") == page_number:
+                p["storage_usage"] = storage
+                found = True
+                break
+
+        if not found:
+            pages.append({
+                "page_number": page_number,
+                "created_at": datetime.utcnow().isoformat(),
+                "created_by": "",
+                "permissions": schema.get("roles", []),
+                "storage_usage": storage
+            })
+
+        await self.repo.update_schema(table_id, tenant_id, {"pages": pages})
+
+    async def add_page(self, table_id: str, current_user: dict) -> dict:
+        """Create a new table page, keeping the same schema and permissions, under subscription limits."""
+        schema = await self.get_schema_detail(table_id, current_user)
+        self._assert_role_access(current_user, schema)
+
+        tenant_id = current_user["tenant_id"]
+
+        limit = await self.get_tenant_page_limit(tenant_id)
+        pages = schema.get("pages") or []
+        if not pages:
+            created_at_val = schema.get("created_at")
+            created_at_str = created_at_val.isoformat() if isinstance(created_at_val, datetime) else str(created_at_val)
+            pages = [{
+                "page_number": 1,
+                "created_at": created_at_str,
+                "created_by": schema.get("created_by", ""),
+                "permissions": schema.get("roles", []),
+                "storage_usage": 0
+            }]
+
+        if len(pages) >= limit:
+            raise ValidationException(f"Page limit exceeded for your current plan (Limit: {limit} pages). Please upgrade your plan.")
+
+        new_page_number = len(pages) + 1
+
+        pages.append({
+            "page_number": new_page_number,
+            "created_at": datetime.utcnow().isoformat(),
+            "created_by": str(current_user["_id"]),
+            "permissions": schema.get("roles", []),
+            "storage_usage": 0
+        })
+
+        updated = await self.repo.update_schema(table_id, tenant_id, {"pages": pages})
+
+        # Log audit trail
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_page_create",
+            description=f"Added new page {new_page_number} to table '{schema['name']}'",
+            tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
+
+        # Broadcast page creation event via WebSocket
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_page_created",
+            data={
+                "tableId": table_id,
+                "pageNumber": new_page_number,
+                "pages": pages
+            },
+            warehouse_id=schema.get("warehouse_id")
+        )
+
+        return updated

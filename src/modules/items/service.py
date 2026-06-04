@@ -9,15 +9,26 @@ from src.modules.items.schema import ItemCreate, ItemUpdate
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
 from src.modules.audit_logs.service import AuditLogService
+from src.modules.trash.service import TrashService
+from src.modules.registry.service import CentralRegistryService
 
 logger = logging.getLogger("wareops_erp.modules.items.service")
 
 
 class ItemService:
-    def __init__(self, repository: ItemRepository = Depends(), db=Depends(get_db), audit: AuditLogService = Depends()):
+    def __init__(
+        self,
+        repository: ItemRepository = Depends(),
+        db=Depends(get_db),
+        audit: AuditLogService = Depends(),
+        trash: TrashService = Depends(),
+        registry: CentralRegistryService = Depends()
+    ):
         self.repository = repository
         self.db = db
         self.audit = audit
+        self.trash = trash
+        self.registry = registry
 
     def _convert_decimal128_value(self, val) -> float:
         """Helper to convert potential Decimal128 from database aggregates into float."""
@@ -114,9 +125,14 @@ class ItemService:
         if not await self.verify_sku_uniqueness(sku, wh_id, tenant_id):
             raise ValidationException(f"Catalog SKU '{sku}' already exists in this warehouse partition.")
 
+        # Atomic enterprise ID + barcode assignment
+        enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "ITEM")
+
         item_doc = {
             "tenant_id": tenant_id,
             "warehouse_id": wh_id,
+            "enterprise_id": enterprise_id,
+            "barcode": enterprise_id,
             "sku": sku,
             "name": payload.name,
             "category": payload.category,
@@ -124,18 +140,31 @@ class ItemService:
             "stock": payload.stock,
             "unit": payload.unit,
             "tax_category": payload.tax_category,
+            "images": payload.images or [],
             "created_by": user_id,
             "created_at": datetime.utcnow()
         }
 
         created = await self.repository.create_item(item_doc)
 
+        # Register inventory item in centralized ledger registry
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="inventory",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=wh_id,
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=created
+        )
+
         # Log audit operation
         await self.audit.log_event(
             user_id=str(user_id),
             user_name=current_user["name"],
             action="item_create",
-            description=f"Registered new inventory item: '{payload.name}' (SKU: {sku})",
+            description=f"Registered new inventory item: '{payload.name}' (SKU: {sku}, ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=wh_id
         )
@@ -190,12 +219,32 @@ class ItemService:
         update_data["updated_at"] = datetime.utcnow()
         updated = await self.repository.update_item(item_id, tenant_id, update_data)
 
+        # Snapshot update logic scoped inside Central Registry
+        enterprise_id = updated.get("enterprise_id")
+        if not enterprise_id:
+            # Backward compatibility fallback
+            enterprise_id = await self.registry.get_next_enterprise_id(tenant_id, "ITEM")
+            await self.repository.update_item(item_id, tenant_id, {"enterprise_id": enterprise_id, "barcode": enterprise_id})
+            updated["enterprise_id"] = enterprise_id
+            updated["barcode"] = enterprise_id
+
+        await self.registry.register_entity(
+            tenant_id=tenant_id,
+            entity_type="inventory",
+            entity_id=enterprise_id,
+            barcode=enterprise_id,
+            warehouse_id=item["warehouse_id"],
+            creator_id=str(user_id),
+            creator_name=current_user["name"],
+            snapshot=updated
+        )
+
         # Log audit operation
         await self.audit.log_event(
             user_id=str(user_id),
             user_name=current_user["name"],
             action="item_update",
-            description=f"Updated inventory item details for: '{item['name']}'",
+            description=f"Updated inventory item details for: '{item['name']}' (ID: {enterprise_id})",
             tenant_id=tenant_id,
             warehouse_id=item["warehouse_id"]
         )
@@ -231,6 +280,24 @@ class ItemService:
         # Non-super_admins can only delete items in their assigned warehouse
         if role != "super_admin" and item["warehouse_id"] != current_user.get("warehouse_id"):
             raise PermissionException("Unauthorized: You do not have access to this warehouse registry.")
+
+        # Move document to trash to act as a soft-delete
+        item_data = dict(item)
+        # Avoid timezone-offset issues with datetime in JSON/Pydantic
+        if "created_at" in item_data and isinstance(item_data["created_at"], datetime):
+            item_data["created_at"] = item_data["created_at"].isoformat()
+        if "updated_at" in item_data and isinstance(item_data["updated_at"], datetime):
+            item_data["updated_at"] = item_data["updated_at"].isoformat()
+        if "price" in item_data and isinstance(item_data["price"], Decimal):
+            item_data["price"] = float(item_data["price"])
+
+        await self.trash.soft_delete(
+            doc_id=item_id,
+            original_collection="inventory_items",
+            tenant_id=tenant_id,
+            deleted_by=str(user_id),
+            data=item_data
+        )
 
         deleted = await self.repository.delete_item(item_id, tenant_id)
 
