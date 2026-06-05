@@ -28,6 +28,26 @@ async def list_registry_entries(
     return {"success": True, "data": data}
 
 
+@router.get("/lookup")
+async def lookup_barcode(
+    code: str = Query(..., description="Barcode to look up"),
+    current_user: dict = Depends(get_current_user),
+    service: CentralRegistryService = Depends()
+):
+    """Resolve a barcode to its registered entity snapshot."""
+    entry = await service.db.enterprise_registry.find_one({
+        "tenant_id": current_user["tenant_id"],
+        "$or": [
+            {"barcode": code},
+            {"entity_id": code}
+        ]
+    })
+    if not entry:
+        return {"success": False, "message": "Barcode not found in registry."}
+    from src.modules.realtime import normalize_doc
+    return {"success": True, "data": normalize_doc(entry)}
+
+
 @router.get("/barcode")
 async def get_barcode_svg(
     code: str = Query(..., description="String code to encode in Code 39 format")

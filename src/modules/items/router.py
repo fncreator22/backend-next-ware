@@ -4,7 +4,7 @@ import csv
 import io
 from datetime import datetime
 from src.modules.auth.dependencies import get_current_user
-from src.modules.items.schema import ItemCreate, ItemUpdate, ItemResponse
+from src.modules.items.schema import ItemCreate, ItemUpdate, ItemResponse, BarcodeGenerateRequest
 from src.modules.items.service import ItemService
 
 router = APIRouter(prefix="/items", tags=["Inventory Items"])
@@ -287,3 +287,15 @@ async def import_items(
         "imported": success_count,
         "errors": errors
     }
+
+
+@router.post("/generate-barcodes")
+async def generate_barcodes(
+    payload: BarcodeGenerateRequest,
+    current_user: dict = Depends(get_current_user),
+    service: ItemService = Depends()
+):
+    """Batch generate unique barcode codes, update stock levels, register in the ledger, and return results."""
+    res = await service.generate_barcodes(payload, current_user)
+    return {"success": True, "data": res}
+

@@ -142,7 +142,8 @@ class ItemService:
             "tax_category": payload.tax_category,
             "images": payload.images or [],
             "created_by": user_id,
-            "created_at": datetime.utcnow()
+            "created_at": datetime.utcnow(),
+            "low_stock_threshold": payload.low_stock_threshold
         }
 
         created = await self.repository.create_item(item_doc)
@@ -344,7 +345,7 @@ class ItemService:
                 "total_items": {"$sum": 1},
                 "total_stock": {"$sum": "$stock"},
                 "total_valuation": {"$sum": {"$multiply": ["$price", "$stock"]}},
-                "low_stock": {"$sum": {"$cond": [{"$lt": ["$stock", 20]}, 1, 0]}},
+                "low_stock": {"$sum": {"$cond": [{"$lt": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, 1, 0]}},
                 "out_of_stock": {"$sum": {"$cond": [{"$eq": ["$stock", 0]}, 1, 0]}}
             }}
         ]
@@ -423,7 +424,7 @@ class ItemService:
                     "$cond": [
                         {"$eq": ["$stock", 0]},
                         "out_of_stock",
-                        {"$cond": [{"$lt": ["$stock", 20]}, "low_stock", "in_stock"]}
+                        {"$cond": [{"$lt": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, "low_stock", "in_stock"]}
                     ]
                 }
             }},
@@ -485,3 +486,135 @@ class ItemService:
                 "stockVolume": trend["stock_volume"]
             })
         return trends
+
+    async def generate_barcodes(self, payload: any, current_user: dict) -> dict:
+        """Batch generate unique barcodes for an item, syncing stock level and registry logs."""
+        role = current_user["role"]
+        tenant_id = current_user["tenant_id"]
+        user_id = current_user.get("_id") or current_user.get("id")
+
+        if role not in ["super_admin", "admin", "manager"]:
+            raise PermissionException("Unauthorized to generate barcodes.")
+
+        item = None
+        generated_barcodes = []
+
+        if payload.itemId:
+            # Existing Item
+            item = await self.get_item_detail(payload.itemId, current_user)
+            wh_id = item["warehouse_id"]
+            
+            # Generate unique barcodes
+            for _ in range(payload.quantity):
+                barcode = await self.registry.get_next_enterprise_id(tenant_id, "ITEM")
+                generated_barcodes.append(barcode)
+                
+                # Register in Central Ledger
+                await self.registry.register_entity(
+                    tenant_id=tenant_id,
+                    entity_type="inventory",
+                    entity_id=barcode,
+                    barcode=barcode,
+                    warehouse_id=wh_id,
+                    creator_id=str(user_id),
+                    creator_name=current_user["name"],
+                    snapshot=item
+                )
+
+            # Update item barcodes list and stock count in db
+            existing_barcodes = item.get("barcodes") or []
+            if item.get("barcode") and item.get("barcode") not in existing_barcodes:
+                existing_barcodes.append(item["barcode"])
+            
+            new_barcodes = existing_barcodes + generated_barcodes
+            new_stock = item["stock"] + payload.quantity
+
+            updated = await self.repository.update_item(
+                item["id"],
+                tenant_id,
+                {
+                    "stock": new_stock,
+                    "barcodes": new_barcodes,
+                    "status": "in_stock" if new_stock > 0 else "out_of_stock"
+                }
+            )
+            item = updated
+        else:
+            # New Item: payload.newItem must be provided
+            if not payload.newItem:
+                raise ValidationException("newItem configuration required to create a new item.")
+
+            # Non-super_admins can only register items to their assigned warehouse
+            wh_id = payload.newItem.warehouse_id
+            if role != "super_admin" and wh_id != current_user.get("warehouse_id"):
+                raise PermissionException("Unauthorized: You can only register items inside your assigned warehouse.")
+
+            # Create item document with stock = payload.quantity
+            # Create it with stock = 0, then generate barcodes and update it
+            payload_new = payload.newItem
+            payload_new.stock = 0
+            new_item = await self.create_item(payload_new, current_user)
+            
+            # Generate N unique barcodes
+            for _ in range(payload.quantity):
+                barcode = await self.registry.get_next_enterprise_id(tenant_id, "ITEM")
+                generated_barcodes.append(barcode)
+                
+                # Register in Central Ledger
+                await self.registry.register_entity(
+                    tenant_id=tenant_id,
+                    entity_type="inventory",
+                    entity_id=barcode,
+                    barcode=barcode,
+                    warehouse_id=wh_id,
+                    creator_id=str(user_id),
+                    creator_name=current_user["name"],
+                    snapshot=new_item
+                )
+            
+            # Update the item with the list of barcodes and stock
+            existing_barcodes = [new_item["barcode"]] if new_item.get("barcode") else []
+            new_barcodes = existing_barcodes + generated_barcodes
+            
+            updated = await self.repository.update_item(
+                new_item["id"],
+                tenant_id,
+                {
+                    "stock": payload.quantity,
+                    "barcodes": new_barcodes,
+                    "status": "in_stock" if payload.quantity > 0 else "out_of_stock"
+                }
+            )
+            item = updated
+
+        # Log audit operation
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="item_barcodes_generate",
+            description=f"Generated {payload.quantity} barcodes for item: '{item['name']}' (SKU: {item['sku']})",
+            tenant_id=tenant_id,
+            warehouse_id=wh_id
+        )
+
+        # Trigger WebSocket refresh
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="inventory_change",
+                data=normalize_doc(item),
+                warehouse_id=wh_id
+            ))
+        except Exception as e:
+            logger.debug(f"WS broadcast failed: {e}")
+
+        from src.modules.items.schema import ItemResponse
+        serialized = ItemResponse.model_validate(item).model_dump(by_alias=True)
+        serialized["barcodes"] = item.get("barcodes", [])
+        
+        return {
+            "item": serialized,
+            "barcodes": generated_barcodes
+        }
+

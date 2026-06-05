@@ -117,3 +117,22 @@ class DynamicTableRepository:
         """Cascade deletes all row documents belonging to a schema."""
         res = await self.rows_collection.delete_many({"table_id": table_id, "tenant_id": tenant_id})
         return res.deleted_count
+
+    async def delete_rows_for_page(self, table_id: str, page_number: int, tenant_id: str) -> int:
+        """Purge all rows belonging to a specific table page."""
+        query = {
+            "table_id": table_id,
+            "tenant_id": tenant_id,
+            "page_number": {"$in": [page_number, None]} if page_number == 1 else page_number
+        }
+        res = await self.rows_collection.delete_many(query)
+        return res.deleted_count
+
+    async def decrement_page_numbers(self, table_id: str, from_page: int, tenant_id: str) -> int:
+        """Shift subsequent page numbers down by 1 for contiguous tracking."""
+        res = await self.rows_collection.update_many(
+            {"table_id": table_id, "tenant_id": tenant_id, "page_number": {"$gt": from_page}},
+            {"$inc": {"page_number": -1}}
+        )
+        return res.modified_count
+

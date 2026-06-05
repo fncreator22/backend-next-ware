@@ -31,6 +31,8 @@ class ItemCreate(BaseModel):
     warehouse_id: str = Field(..., alias="warehouseId")
     images: Optional[List[str]] = Field(default_factory=list)
     barcode: Optional[str] = None
+    barcodes: Optional[List[str]] = Field(default_factory=list)
+    low_stock_threshold: int = Field(20, alias="lowStockThreshold")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -49,6 +51,8 @@ class ItemUpdate(BaseModel):
     warehouse_id: Optional[str] = Field(None, alias="warehouseId")
     images: Optional[List[str]] = None
     barcode: Optional[str] = None
+    barcodes: Optional[List[str]] = None
+    low_stock_threshold: Optional[int] = Field(None, alias="lowStockThreshold")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -71,6 +75,9 @@ class ItemResponse(BaseModel):
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
     images: Optional[List[str]] = Field(default_factory=list)
     barcode: Optional[str] = None
+    barcodes: Optional[List[str]] = Field(default_factory=list)
+    low_stock_threshold: int = Field(20, alias="lowStockThreshold")
+    health_status: str = Field(..., alias="healthStatus")
 
     @model_validator(mode="before")
     @classmethod
@@ -89,9 +96,47 @@ class ItemResponse(BaseModel):
                 data["createdAt"] = data["created_at"]
             if "updatedAt" not in data and "updated_at" in data:
                 data["updatedAt"] = data["updated_at"]
+            if "lowStockThreshold" not in data and "low_stock_threshold" in data:
+                data["lowStockThreshold"] = data["low_stock_threshold"]
+            elif "low_stock_threshold" not in data and "lowStockThreshold" in data:
+                data["low_stock_threshold"] = data["lowStockThreshold"]
+            
+            threshold = data.get("low_stock_threshold") or data.get("lowStockThreshold") or 20
+            stock = data.get("stock", 0)
+            if stock == 0:
+                data["healthStatus"] = "Critical"
+            elif stock < threshold:
+                data["healthStatus"] = "Low Stock"
+            else:
+                data["healthStatus"] = "Healthy"
+            data["health_status"] = data["healthStatus"]
+        else:
+            threshold = getattr(data, "low_stock_threshold", 20) or getattr(data, "lowStockThreshold", 20)
+            stock = getattr(data, "stock", 0)
+            if stock == 0:
+                setattr(data, "healthStatus", "Critical")
+                setattr(data, "health_status", "Critical")
+            elif stock < threshold:
+                setattr(data, "healthStatus", "Low Stock")
+                setattr(data, "health_status", "Low Stock")
+            else:
+                setattr(data, "healthStatus", "Healthy")
+                setattr(data, "health_status", "Healthy")
         return data
 
     model_config = ConfigDict(
         populate_by_name=True,
         from_attributes=True
     )
+
+
+class BarcodeGenerateRequest(BaseModel):
+    itemId: Optional[str] = Field(None, alias="itemId")
+    quantity: int = Field(..., ge=1, le=50)
+    newItem: Optional[ItemCreate] = Field(None, alias="newItem")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        str_strip_whitespace=True
+    )
+

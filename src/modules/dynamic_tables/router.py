@@ -74,11 +74,21 @@ async def delete_schema(
 async def list_rows(
     tableId: str,
     page: int = Query(1, alias="page"),
+    search: str = Query("", description="Search registry"),
+    entity_type: str = Query("", alias="entityType"),
+    warehouse_id: Optional[str] = Query(None, alias="warehouseId"),
     current_user: dict = Depends(get_current_user),
     service: DynamicTableService = Depends()
 ):
     """Fetch custom row documents from MongoDB collections matching isolation scopes and page number."""
-    rows = await service.list_rows(tableId, current_user, page=page)
+    rows = await service.list_rows(
+        tableId,
+        current_user,
+        page=page,
+        search=search,
+        entity_type=entity_type,
+        warehouse_id=warehouse_id
+    )
     return {
         "success": True,
         "data": rows,
@@ -116,6 +126,23 @@ async def add_table_page(
         "success": True,
         "data": serialized,
         "message": "New table page created successfully."
+    }
+
+
+@router.delete("/{tableId}/pages/{pageNumber}", response_model=dict)
+async def delete_table_page(
+    tableId: str,
+    pageNumber: int,
+    current_user: dict = Depends(get_current_user),
+    service: DynamicTableService = Depends()
+):
+    """Delete a page from the custom table and cascade purge its rows."""
+    schema = await service.delete_page(tableId, pageNumber, current_user)
+    serialized = TableSchemaResponse.from_doc(schema).model_dump(by_alias=True)
+    return {
+        "success": True,
+        "data": serialized,
+        "message": f"Table page {pageNumber} and its rows deleted successfully."
     }
 
 

@@ -44,10 +44,79 @@ class DynamicTableService:
             query["warehouse_id"] = warehouse_id
 
         schemas = await self.repo.list_schemas(query)
+        
+        # Append virtual Central Registry Table for super_admin
+        if role == "super_admin":
+            registry_schema = {
+                "_id": "central_registry",
+                "id": "central_registry",
+                "name": "Central Registry Table",
+                "category": "Operations",
+                "description": "System-generated Tracking Registry Ledger (Read-Only)",
+                "warehouse_id": "Global",
+                "tenant_id": tenant_id,
+                "columns": [
+                    {"id": "entity_id", "name": "Unique ID", "type": "text", "required": True},
+                    {"id": "entity_type", "name": "Entity Type", "type": "text", "required": True},
+                    {"id": "barcode", "name": "Offline Barcode", "type": "text", "required": True},
+                    {"id": "warehouse_id", "name": "Warehouse Scope", "type": "text", "required": True},
+                    {"id": "creator_name", "name": "Creator Log", "type": "text", "required": True},
+                    {"id": "created_at", "name": "Registered At", "type": "text", "required": True}
+                ],
+                "roles": [],
+                "header_color": "#8b5cf6",
+                "created_by": "system",
+                "created_at": datetime.utcnow(),
+                "status": "active"
+            }
+            if not any(s.get("id") == "central_registry" or s.get("_id") == "central_registry" for s in schemas):
+                schemas.append(registry_schema)
+                
         return schemas
 
     async def get_schema_detail(self, table_id: str, current_user: dict) -> dict:
-        """Fetch custom table schema detailed configurations."""
+        if table_id == "central_registry":
+            if current_user.get("role") != "super_admin":
+                raise PermissionException("Only super admins have access to the Central Registry.")
+            # Dynamically count entries for page generation
+            tenant_id = current_user["tenant_id"]
+            total = await self.repo.db.enterprise_registry.count_documents({"tenant_id": tenant_id})
+            num_pages = max(1, (total + 99) // 100)
+            
+            pages = [{
+                "page_number": p,
+                "created_at": datetime.utcnow().isoformat(),
+                "created_by": "system",
+                "permissions": [],
+                "storage_usage": 0
+            } for p in range(1, num_pages + 1)]
+            
+            return {
+                "_id": "central_registry",
+                "id": "central_registry",
+                "name": "Central Registry Table",
+                "category": "Operations",
+                "description": "System-generated Tracking Registry Ledger (Read-Only)",
+                "warehouse_id": "Global",
+                "tenant_id": tenant_id,
+                "columns": [
+                    {"id": "entity_id", "name": "Unique ID", "type": "text", "required": True},
+                    {"id": "entity_type", "name": "Entity Type", "type": "text", "required": True},
+                    {"id": "barcode", "name": "Offline Barcode", "type": "text", "required": True},
+                    {"id": "warehouse_id", "name": "Warehouse Scope", "type": "text", "required": True},
+                    {"id": "creator_name", "name": "Creator Log", "type": "text", "required": True},
+                    {"id": "created_at", "name": "Registered At", "type": "text", "required": True}
+                ],
+                "roles": [],
+                "header_color": "#8b5cf6",
+                "created_by": "system",
+                "created_at": datetime.utcnow(),
+                "status": "active",
+                "pages": pages,
+                "enterprise_id": "central_registry",
+                "barcode": "central_registry"
+            }
+
         schema = await self.repo.find_schema_by_id(table_id, current_user["tenant_id"])
         if not schema:
             raise NotFoundException("Custom operational table schema not found.")
@@ -139,6 +208,8 @@ class DynamicTableService:
 
     async def update_schema(self, table_id: str, payload: Any, current_user: dict) -> dict:
         """Update existing custom table configuration schemas."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         tenant_id = current_user["tenant_id"]
 
@@ -209,6 +280,8 @@ class DynamicTableService:
 
     async def delete_schema(self, table_id: str, current_user: dict) -> bool:
         """Delete custom table and cascade purge all dynamic rows documents."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         tenant_id = current_user["tenant_id"]
 
@@ -254,8 +327,45 @@ class DynamicTableService:
 
     # --- TABLE ROWS BUSINESS LOGIC ---
 
-    async def list_rows(self, table_id: str, current_user: dict, page: int = 1) -> List[dict]:
+    async def list_rows(
+        self,
+        table_id: str,
+        current_user: dict,
+        page: int = 1,
+        search: str = "",
+        entity_type: str = "",
+        warehouse_id: Optional[str] = None
+    ) -> List[dict]:
         """Fetch custom row documents from MongoDB collections matching isolation scopes and page number."""
+        if table_id == "central_registry":
+            if current_user.get("role") != "super_admin":
+                raise PermissionException("Only super admins have access to the Central Registry.")
+            reg_data = await self.registry.list_registry_entries(
+                current_user=current_user,
+                search_q=search,
+                type_filter=entity_type,
+                warehouse_filter=warehouse_id,
+                page=page,
+                limit=100
+            )
+            rows = []
+            for e in reg_data.get("entries", []):
+                rows.append({
+                    "id": e["entity_id"],
+                    "tableId": "central_registry",
+                    "warehouseId": e["warehouse_id"],
+                    "tenantId": e["tenant_id"],
+                    "pageNumber": page,
+                    "createdAt": e["created_at"].isoformat() if isinstance(e["created_at"], datetime) else str(e["created_at"]),
+                    "entity_id": e["entity_id"],
+                    "entity_type": e["entity_type"],
+                    "barcode": f"/api/v1/registry/barcode?code={e['entity_id']}",
+                    "warehouse_id": e["warehouse_id"],
+                    "creator_name": e["creator_name"],
+                    "created_at": e["created_at"].isoformat() if isinstance(e["created_at"], datetime) else str(e["created_at"])
+                })
+            return rows
+
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -265,6 +375,8 @@ class DynamicTableService:
 
     async def append_row(self, table_id: str, row_data: Dict[str, Any], current_user: dict, page: int = 1) -> dict:
         """Append validated custom row documents into database collections."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -316,6 +428,8 @@ class DynamicTableService:
 
     async def update_row(self, table_id: str, row_id: str, row_data: Dict[str, Any], current_user: dict) -> dict:
         """Update validated custom row fields."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -359,6 +473,8 @@ class DynamicTableService:
 
     async def delete_row(self, table_id: str, row_id: str, current_user: dict) -> bool:
         """Delete custom row document."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -416,6 +532,8 @@ class DynamicTableService:
 
     async def import_rows(self, table_id: str, rows_data: List[Dict[str, Any]], current_user: dict, page: int = 1) -> dict:
         """Bulk import multiple rows into a custom table page (admin/manager only)."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -625,6 +743,8 @@ class DynamicTableService:
 
     async def add_page(self, table_id: str, current_user: dict) -> dict:
         """Create a new table page, keeping the same schema and permissions, under subscription limits."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
         schema = await self.get_schema_detail(table_id, current_user)
         self._assert_role_access(current_user, schema)
 
@@ -681,3 +801,85 @@ class DynamicTableService:
         )
 
         return updated
+
+    async def delete_page(self, table_id: str, page_number: int, current_user: dict) -> dict:
+        """Delete a table page, cascading to rows and shifting subsequent pages down."""
+        if table_id == "central_registry":
+            raise ValidationException("Central Registry Table is read-only.")
+        schema = await self.get_schema_detail(table_id, current_user)
+        self._assert_role_access(current_user, schema)
+        
+        tenant_id = current_user["tenant_id"]
+        pages = schema.get("pages") or []
+        
+        if len(pages) <= 1:
+            raise ValidationException("Cannot delete the final remaining page in a table.")
+            
+        target_page = next((p for p in pages if p["page_number"] == page_number), None)
+        if not target_page:
+            raise NotFoundException(f"Page {page_number} does not exist.")
+            
+        # Fetch rows on target page for soft-deletion/trash
+        rows_to_delete = await self.repo.list_rows_by_table_and_page(table_id, page_number, tenant_id)
+        for row in rows_to_delete:
+            row_data = dict(row)
+            if "_id" in row_data:
+                row_data["_id"] = str(row_data["_id"])
+            if "created_at" in row_data and isinstance(row_data["created_at"], datetime):
+                row_data["created_at"] = row_data["created_at"].isoformat()
+            if "updated_at" in row_data and isinstance(row_data["updated_at"], datetime):
+                row_data["updated_at"] = row_data["updated_at"].isoformat()
+                
+            await self.trash.soft_delete(
+                doc_id=str(row["_id"]),
+                original_collection="table_rows",
+                tenant_id=tenant_id,
+                deleted_by=str(current_user["_id"]),
+                data=row_data
+            )
+            
+        # Purge page rows
+        deleted_count = await self.repo.delete_rows_for_page(table_id, page_number, tenant_id)
+        
+        # Shift subsequent page numbers down by 1 in rows collection
+        await self.repo.decrement_page_numbers(table_id, page_number, tenant_id)
+        
+        # Build contiguous pages list
+        new_pages = []
+        for p in pages:
+            if p["page_number"] == page_number:
+                continue
+            elif p["page_number"] > page_number:
+                p_copy = dict(p)
+                p_copy["page_number"] = p["page_number"] - 1
+                new_pages.append(p_copy)
+            else:
+                new_pages.append(p)
+                
+        # Persist schema updates
+        updated = await self.repo.update_schema(table_id, tenant_id, {"pages": new_pages})
+        
+        # Audit log event
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="table_page_delete",
+            description=f"Deleted page {page_number} from table '{schema['name']}' (Purged {deleted_count} rows)",
+            tenant_id=tenant_id,
+            warehouse_id=schema.get("warehouse_id")
+        )
+        
+        # Broadcast event via WS manager
+        await manager.broadcast_event(
+            tenant_id=tenant_id,
+            event_type="table_page_deleted",
+            data={
+                "tableId": table_id,
+                "pageNumber": page_number,
+                "pages": new_pages
+            },
+            warehouse_id=schema.get("warehouse_id")
+        )
+        
+        return updated
+

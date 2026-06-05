@@ -77,13 +77,19 @@ async def websocket_endpoint(
 
 @router.get("/realtime/notifications")
 async def get_notifications(
+    unread_only: bool = Query(False, alias="unreadOnly"),
     current_user: dict = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Retrieve notifications belonging to the logged-in user."""
     user_id = current_user.get("_id") or current_user.get("id")
     tenant_id = current_user["tenant_id"]
-    cursor = db.notifications.find({"userId": user_id, "tenant_id": tenant_id}).sort("timestamp", -1)
+    
+    query = {"userId": user_id, "tenant_id": tenant_id}
+    if unread_only:
+        query["read"] = False
+        
+    cursor = db.notifications.find(query).sort("timestamp", -1)
     notifications = await cursor.to_list(length=200)
     
     # Normalize _id keys

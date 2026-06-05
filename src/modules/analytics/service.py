@@ -81,7 +81,8 @@ class AnalyticsService:
         for i in items:
             stock = int(i.get("stock", 0))
             total_stock += stock
-            if stock < 20:
+            threshold = int(i.get("low_stock_threshold", 20))
+            if stock < threshold:
                 low_stock_count += 1
                 if len(low_stock_items) < 5:
                     low_stock_items.append({
@@ -90,7 +91,8 @@ class AnalyticsService:
                         "sku": i.get("sku", ""),
                         "stock": stock,
                         "price": self._to_float(i.get("price", 0.0)),
-                        "warehouseId": i.get("warehouse_id", "")
+                        "warehouseId": i.get("warehouse_id", ""),
+                        "lowStockThreshold": threshold
                     })
 
         # 3. Active users count
@@ -101,7 +103,7 @@ class AnalyticsService:
 
         # 5. Smart Restock Suggestions prioritizations
         restock_suggestions = []
-        low_for_restock = [i for i in items if int(i.get("stock", 0)) < 50]
+        low_for_restock = [i for i in items if int(i.get("stock", 0)) < int(i.get("low_stock_threshold", 20))]
         
         # Calculate sales count per low-stock item based on bills
         sales_velocity = {}
@@ -114,8 +116,9 @@ class AnalyticsService:
         for i in low_for_restock:
             i_id = str(i["_id"])
             stock = int(i.get("stock", 0))
+            threshold = int(i.get("low_stock_threshold", 20))
             sales_count = sales_velocity.get(i_id, 0)
-            priority = (sales_count * 2) + (50 - stock)
+            priority = (sales_count * 2) + (threshold - stock)
             restock_suggestions.append({
                 "id": i_id,
                 "name": i.get("name", ""),
@@ -123,7 +126,8 @@ class AnalyticsService:
                 "stock": stock,
                 "salesCount": sales_count,
                 "priority": priority,
-                "warehouseId": i.get("warehouse_id", "")
+                "warehouseId": i.get("warehouse_id", ""),
+                "lowStockThreshold": threshold
             })
 
         # Sort restock suggestions by priority descending
@@ -329,16 +333,35 @@ class AnalyticsService:
         cursor = self.db.bills.aggregate(pipeline)
         res = await cursor.to_list(length=12)
 
-        months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        trends = []
+        # Build lookup table of DB results
+        db_results = {}
         for r in res:
             yr = r["_id"]["year"]
             m_idx = r["_id"]["month"]
+            db_results[(yr, m_idx)] = r
+
+        # Generate a contiguous sequence of last 12 months in Python
+        now = datetime.utcnow()
+        last_12_months = []
+        for i in range(11, -1, -1):
+            m = now.month - i
+            y = now.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            last_12_months.append((y, m))
+
+        months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        trends = []
+        for yr, m_idx in last_12_months:
+            r = db_results.get((yr, m_idx))
+            total_rev = self._to_float(r.get("totalRevenue", 0.0)) if r else 0.0
+            total_tax = self._to_float(r.get("totalTax", 0.0)) if r else 0.0
             trends.append({
                 "year": yr,
                 "month": m_idx,
                 "monthName": f"{months[m_idx]} {yr}",
-                "totalRevenue": self._to_float(r.get("totalRevenue", 0.0)),
-                "totalTax": self._to_float(r.get("totalTax", 0.0))
+                "totalRevenue": total_rev,
+                "totalTax": total_tax
             })
         return trends
