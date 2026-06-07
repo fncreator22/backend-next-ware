@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, status
-from src.modules.workforce.schema import UserCreate, UserUpdate
+from src.modules.workforce.schema import UserCreate, UserUpdate, DocumentReview
 from src.modules.workforce.service import WorkforceService
 from src.modules.auth.dependencies import get_current_user
 
@@ -65,4 +65,34 @@ async def delete_workforce_member(
     return {
         "success": True,
         "message": "Workforce member successfully removed from platform."
+    }
+
+
+@router.get("/documents/pending")
+async def get_pending_documents(
+    current_user: dict = Depends(get_current_user),
+    service: WorkforceService = Depends()
+):
+    """Fetch pending compliance documents across the tenant."""
+    pending = await service.get_pending_documents(current_user)
+    return {
+        "success": True,
+        "data": pending,
+        "message": "Pending documents list retrieved successfully."
+    }
+
+
+@router.post("/documents/{doc_id}/review")
+async def review_document(
+    doc_id: str,
+    payload: DocumentReview,
+    current_user: dict = Depends(get_current_user),
+    service: WorkforceService = Depends()
+):
+    """Approve or reject a pending compliance document."""
+    reviewed = await service.review_document(doc_id, payload.dict(), current_user)
+    return {
+        "success": True,
+        "data": reviewed,
+        "message": f"Document status updated successfully to {payload.status}."
     }

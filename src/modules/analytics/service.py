@@ -5,6 +5,8 @@ from fastapi import Depends
 from src.database import get_db
 from src.modules.audit_logs.repository import AuditLogRepository
 from src.modules.audit_logs.service import AuditLogService
+from src.modules.auth.dependencies import check_user_permission
+from src.middleware.exceptions import PermissionException
 
 logger = logging.getLogger("wareops_erp.modules.analytics.service")
 
@@ -26,6 +28,8 @@ class AnalyticsService:
 
     async def get_dashboard_summary(self, current_user: dict, warehouse_id: Optional[str] = None) -> Dict[str, Any]:
         """Compile a real-time global or scoped operational dashboard summary for quick rendering."""
+        if not await check_user_permission(current_user, "dashboard", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view the dashboard summary.")
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 
@@ -82,7 +86,7 @@ class AnalyticsService:
             stock = int(i.get("stock", 0))
             total_stock += stock
             threshold = int(i.get("low_stock_threshold", 20))
-            if stock < threshold:
+            if stock <= threshold:
                 low_stock_count += 1
                 if len(low_stock_items) < 5:
                     low_stock_items.append({
@@ -103,7 +107,7 @@ class AnalyticsService:
 
         # 5. Smart Restock Suggestions prioritizations
         restock_suggestions = []
-        low_for_restock = [i for i in items if int(i.get("stock", 0)) < int(i.get("low_stock_threshold", 20))]
+        low_for_restock = [i for i in items if int(i.get("stock", 0)) <= int(i.get("low_stock_threshold", 20))]
         
         # Calculate sales count per low-stock item based on bills
         sales_velocity = {}
@@ -187,6 +191,8 @@ class AnalyticsService:
 
     async def get_revenue_analytics(self, current_user: dict, warehouse_id: Optional[str] = None) -> Dict[str, Any]:
         """Compute total gross revenue, tax collected, net earnings, and averages."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view revenue analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 
@@ -233,6 +239,8 @@ class AnalyticsService:
 
     async def get_inventory_analytics(self, current_user: dict, warehouse_id: Optional[str] = None) -> List[dict]:
         """Break down inventory stock totals and financial valuation grouped per category."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view inventory analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 
@@ -273,6 +281,8 @@ class AnalyticsService:
 
     async def get_workforce_analytics(self, current_user: dict, warehouse_id: Optional[str] = None) -> List[dict]:
         """Aggregate workforce users role distribution totals."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view workforce analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 
@@ -304,6 +314,8 @@ class AnalyticsService:
 
     async def get_trends_analytics(self, current_user: dict, warehouse_id: Optional[str] = None) -> List[dict]:
         """Compute monthly invoices revenue and taxation trends over the last 12 months."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view trends analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user.get("role")
 

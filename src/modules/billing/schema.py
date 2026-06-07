@@ -37,6 +37,8 @@ class InvoiceCreate(BaseModel):
     tax: Decimal = Field(..., ge=0)
     total: Decimal = Field(..., ge=0)
     tax_details: Optional[List[TaxDetailCreate]] = Field(None, alias="taxDetails")
+    currency: Optional[str] = None
+    exchange_rate: Optional[Decimal] = Field(None, alias="exchangeRate")
     
     # New billing & corporate fields
     seller_address: Optional[str] = Field(None, alias="sellerAddress")
@@ -105,6 +107,8 @@ class InvoiceResponse(BaseModel):
     tax_details: Optional[List[TaxDetailResponse]] = Field(None, alias="taxDetails")
     created_by: str = Field(..., alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(None, alias="exchangeRate")
 
     # New corporate and metadata fields
     seller_address: Optional[str] = Field(None, alias="sellerAddress")
@@ -137,6 +141,8 @@ class InvoiceResponse(BaseModel):
                 data["createdAt"] = data["created_at"]
             if "taxConfigSnapshot" not in data and "tax_config_snapshot" in data:
                 data["taxConfigSnapshot"] = data["tax_config_snapshot"]
+            if "exchangeRate" not in data and "exchange_rate" in data:
+                data["exchangeRate"] = data["exchange_rate"]
             if "taxDetails" not in data and "tax_details" in data:
                 data["taxDetails"] = data["tax_details"]
                 if isinstance(data["taxDetails"], list):

@@ -132,7 +132,7 @@ async def stream_invoice_pdf(
 
     # Retrieve logo, business name, currency settings
     wh_logo = wh.get("logo", "🏭") if wh else "🏭"
-    wh_currency = wh.get("currency", "USD") if wh else "USD"
+    wh_currency = bill.get("currency") or (wh.get("currency", "USD") if wh else "USD")
     wh_currency_symbol = "₹" if wh_currency == "INR" else "€" if wh_currency == "EUR" else "£" if wh_currency == "GBP" else "$"
     
     wh_email = wh.get("email", "") if wh else ""
@@ -170,7 +170,7 @@ async def stream_invoice_pdf(
                 if t_type == "percentage":
                     tax_parts.append(f"{t_name}: {t_rate*100:.0f}%")
                 else:
-                    tax_parts.append(f"{t_name}: ${t_rate:.2f}")
+                    tax_parts.append(f"{t_name}: {wh_currency_symbol}{t_rate:.2f}")
             tax_rate_text = ", ".join(tax_parts)
         else:
             tax_rate = float(i.get("tax_rate_snapshot", 0.05))
@@ -183,10 +183,10 @@ async def stream_invoice_pdf(
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">{i['name']}</td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center"><span class="badge" style="background-color:#6366f1;color:#fff;padding:2px 6px;border-radius:4px;font-size:10px">{i.get('tax_category', 'normal')}</span></td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600">{i['qty']}</td>
-          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${float(i['price']):.2f}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">{wh_currency_symbol}{float(i['price']):.2f}</td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600;color:#b45309;font-size:11px">{tax_rate_text}</td>
-          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right;color:#b45309">${line_tax:.2f}</td>
-          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${line_total:.2f}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right;color:#b45309">{wh_currency_symbol}{line_tax:.2f}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">{wh_currency_symbol}{line_total:.2f}</td>
         </tr>
         """
     
@@ -210,7 +210,7 @@ async def stream_invoice_pdf(
         for t in bill["tax_details"]:
             tax_amt = float(t.get("amount", 0))
             rate_val = float(t.get("rate", 0))
-            rate_text = f"{(rate_val*100):.1f}%" if t.get("tax_type", "percentage") == "percentage" else f"${rate_val:.2f}"
+            rate_text = f"{(rate_val*100):.1f}%" if t.get("tax_type", "percentage") == "percentage" else f"{wh_currency_symbol}{rate_val:.2f}"
             tax_summary_html += f"""
             <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #e5e7eb;font-size:13px;color:#b45309">
               <span style="color:#b45309">{t['name']} ({rate_text})</span><span style="font-weight:600">{wh_currency_symbol}{tax_amt:.2f}</span>
@@ -294,7 +294,8 @@ async def stream_invoice_pdf(
           📅 <strong>Issue Date:</strong> {created_at.strftime('%Y-%m-%d')}<br/>
           📅 <strong>Due Date:</strong> {due_date.strftime('%Y-%m-%d')}<br/>
           👤 <strong>Billed By:</strong> {employee_name} ({employee_role})<br/>
-          💳 <strong>Payment Method:</strong> Bank Transfer (Net 15)
+          💳 <strong>Payment Method:</strong> Bank Transfer (Net 15)<br/>
+          💵 <strong>Currency:</strong> {wh_currency} {f'(Rate: {bill["exchange_rate"]})' if bill.get("exchange_rate") and float(bill["exchange_rate"]) != 1.0 else ''}
         </div>
       </div>
     </div>

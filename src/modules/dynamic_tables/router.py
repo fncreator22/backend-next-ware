@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status, Query, Body
 from typing import List, Optional
-from src.modules.auth.dependencies import get_current_user, RequireRole
+from src.modules.auth.dependencies import get_current_user, RequirePermission
 from src.modules.dynamic_tables.schema import TableSchemaCreate, TableSchemaResponse
 from src.modules.dynamic_tables.service import DynamicTableService
 
@@ -26,7 +26,7 @@ async def list_schemas(
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=dict)
 async def create_schema(
     payload: TableSchemaCreate,
-    current_user: dict = Depends(RequireRole(["super_admin", "admin"])),
+    current_user: dict = Depends(RequirePermission("tables", "create")),
     service: DynamicTableService = Depends()
 ):
     """Create a new custom table metadata schema validation registry (Super Admins/Admins)."""
@@ -39,11 +39,27 @@ async def create_schema(
     }
 
 
+@router.get("/{tableId}", response_model=dict)
+async def get_schema(
+    tableId: str,
+    current_user: dict = Depends(get_current_user),
+    service: DynamicTableService = Depends()
+):
+    """Retrieve detailed metadata schema configuration for a custom table."""
+    schema = await service.get_schema_detail(tableId, current_user)
+    serialized = TableSchemaResponse.from_doc(schema).model_dump(by_alias=True)
+    return {
+        "success": True,
+        "message": "Custom table schema fetched successfully.",
+        "data": serialized
+    }
+
+
 @router.put("/{tableId}", response_model=dict)
 async def update_schema(
     tableId: str,
     payload: TableSchemaCreate,
-    current_user: dict = Depends(RequireRole(["super_admin", "admin"])),
+    current_user: dict = Depends(RequirePermission("tables", "edit")),
     service: DynamicTableService = Depends()
 ):
     """Update custom table schema definitions configuration (Super Admins/Admins)."""
@@ -59,7 +75,7 @@ async def update_schema(
 @router.delete("/{tableId}", response_model=dict)
 async def delete_schema(
     tableId: str,
-    current_user: dict = Depends(RequireRole(["super_admin", "admin"])),
+    current_user: dict = Depends(RequirePermission("tables", "delete")),
     service: DynamicTableService = Depends()
 ):
     """Delete a custom table schema and cascade purge all dynamic rows documents."""
@@ -101,7 +117,7 @@ async def append_row(
     tableId: str,
     payload: dict,
     page: int = Query(1, alias="page"),
-    current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager", "staff"])),
+    current_user: dict = Depends(RequirePermission("tables", "create")),
     service: DynamicTableService = Depends()
 ):
     """Append validated custom row documents into database (Admins, Managers, and Staff)."""
@@ -151,7 +167,7 @@ async def update_row(
     tableId: str,
     rowId: str,
     payload: dict,
-    current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager", "staff"])),
+    current_user: dict = Depends(RequirePermission("tables", "edit")),
     service: DynamicTableService = Depends()
 ):
     """Update custom table row validated fields (Admins, Managers, and Staff)."""
@@ -167,7 +183,7 @@ async def update_row(
 async def delete_row(
     tableId: str,
     rowId: str,
-    current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager", "staff"])),
+    current_user: dict = Depends(RequirePermission("tables", "delete")),
     service: DynamicTableService = Depends()
 ):
     """Delete custom row document (Admins, Managers, and Staff)."""
@@ -183,7 +199,7 @@ async def import_rows(
     tableId: str,
     payload: list = Body(...),
     page: int = Query(1, alias="page"),
-    current_user: dict = Depends(RequireRole(["super_admin", "admin", "manager"])),
+    current_user: dict = Depends(RequirePermission("tables", "import")),
     service: DynamicTableService = Depends()
 ):
     """

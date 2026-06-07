@@ -4,8 +4,8 @@ import jwt
 from bson import ObjectId
 from fastapi import Depends
 from src.modules.auth.repository import UserRepository
-from src.modules.auth.schema import UserSignup, UserLogin
-from src.modules.auth.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
+from src.modules.auth.schema import UserSignup, UserLogin, ChangePassword, ForgotPassword, ResetPassword
+from src.modules.auth.utils import hash_password, verify_password, create_access_token, create_refresh_token, decode_token, create_access_token as create_reset_token
 from src.middleware.exceptions import AuthException, ValidationException
 from src.modules.audit_logs.service import AuditLogService
 from src.utils.email import send_registration_email
@@ -79,15 +79,45 @@ class AuthService:
 
     async def authenticate_user(self, payload: UserLogin) -> dict:
         """Verify credentials and return access and stateful refresh tokens."""
+        import math
         user = await self.repository.find_by_email(payload.email)
         if not user:
             raise AuthException("Invalid email or password.")
 
+        # Check account lockout status
+        lockout_until = user.get("lockout_until")
+        if lockout_until:
+            if isinstance(lockout_until, str):
+                try:
+                    lockout_until = datetime.fromisoformat(lockout_until)
+                except ValueError:
+                    pass
+            if lockout_until > datetime.utcnow():
+                diff_sec = int((lockout_until - datetime.utcnow()).total_seconds())
+                diff_min = math.ceil(diff_sec / 60)
+                raise AuthException(f"Account is temporarily locked. Please try again in {diff_min} minutes.")
+
         if not verify_password(user["hashed_password"], payload.password):
-            raise AuthException("Invalid email or password.")
+            # Increment failed attempts count
+            attempts = user.get("failed_login_attempts", 0) + 1
+            update_fields = {"failed_login_attempts": attempts}
+            if attempts >= 5:
+                update_fields["lockout_until"] = datetime.utcnow() + timedelta(minutes=15)
+                await self.repository.update_user(user["_id"], update_fields)
+                raise AuthException("Too many failed login attempts. Account locked for 15 minutes.")
+            else:
+                await self.repository.update_user(user["_id"], update_fields)
+                raise AuthException("Invalid email or password.")
 
         if user.get("status", "active") != "active":
             raise AuthException("User account is inactive. Please contact your system administrator.")
+
+        # Reset failed attempts and lockout upon successful authentication
+        if user.get("failed_login_attempts", 0) > 0 or user.get("lockout_until") is not None:
+            await self.repository.update_user(user["_id"], {
+                "failed_login_attempts": 0,
+                "lockout_until": None
+            })
 
         logger.info(f"User authenticated successfully: {user['_id']}")
         return user
@@ -204,3 +234,93 @@ class AuthService:
             # Silent fallback since logout should not crash the frontend
             logger.warning(f"Failed to log logout event: {e}")
             pass
+
+    async def change_password(self, current_user: dict, payload: ChangePassword) -> None:
+        """Modify logged-in user's password securely, revoking existing sessions."""
+        if not verify_password(current_user["hashed_password"], payload.old_password):
+            raise AuthException("Incorrect old password.")
+
+        hashed_pw = hash_password(payload.new_password)
+        user_id = current_user["_id"]
+        
+        await self.repository.update_user(user_id, {"hashed_password": hashed_pw})
+        await self.repository.revoke_all_user_sessions(user_id)
+
+        # Log password change event
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=current_user["name"],
+            action="password_change",
+            description="User changed account password successfully.",
+            tenant_id=current_user["tenant_id"],
+            warehouse_id=current_user.get("warehouse_id")
+        )
+
+    async def forgot_password(self, payload: ForgotPassword) -> str:
+        """Generate a short-lived password reset token for valid email addresses."""
+        user = await self.repository.find_by_email(payload.email)
+        if not user:
+            # Return a dummy string/mock success to prevent email enumeration
+            logger.warning(f"Forgot password requested for non-existent email: '{payload.email}'")
+            return "mock-token"
+
+        # Generate a 15-minute reset token containing user ID
+        token_id = str(ObjectId())
+        claims = {
+            "user_id": user["_id"],
+            "type": "reset",
+            "jti": token_id,
+            "exp": datetime.utcnow() + timedelta(minutes=15)
+        }
+        reset_token = create_reset_token(claims)
+        
+        logger.info(f"Password reset token generated for user: '{user['_id']}'")
+        
+        # Log forgot password request
+        await self.audit.log_event(
+            user_id=str(user["_id"]),
+            user_name=user["name"],
+            action="forgot_password_request",
+            description="Password reset token requested.",
+            tenant_id=user["tenant_id"],
+            warehouse_id=user.get("warehouse_id")
+        )
+        return reset_token
+
+    async def reset_password(self, payload: ResetPassword) -> None:
+        """Decode reset token and update user's password securely."""
+        try:
+            claims = decode_token(payload.token)
+        except jwt.ExpiredSignatureError:
+            raise AuthException("Password reset link has expired.")
+        except jwt.InvalidTokenError:
+            raise AuthException("Invalid password reset link.")
+
+        if claims.get("type") != "reset":
+            raise AuthException("Invalid password reset token type.")
+
+        user_id = claims.get("user_id")
+        if not user_id:
+            raise AuthException("Invalid token payload structure.")
+
+        user = await self.repository.find_by_id(user_id)
+        if not user or user.get("status") != "active":
+            raise AuthException("User profile is inactive or not found.")
+
+        hashed_pw = hash_password(payload.new_password)
+        await self.repository.update_user(user_id, {
+            "hashed_password": hashed_pw,
+            "failed_login_attempts": 0,
+            "lockout_until": None
+        })
+        await self.repository.revoke_all_user_sessions(user_id)
+
+        # Log password reset
+        await self.audit.log_event(
+            user_id=str(user_id),
+            user_name=user["name"],
+            action="password_reset",
+            description="User password reset completed successfully.",
+            tenant_id=user["tenant_id"],
+            warehouse_id=user.get("warehouse_id")
+        )

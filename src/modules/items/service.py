@@ -8,6 +8,7 @@ from src.modules.items.repository import ItemRepository
 from src.modules.items.schema import ItemCreate, ItemUpdate
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.modules.auth.dependencies import check_user_permission
 from src.modules.audit_logs.service import AuditLogService
 from src.modules.trash.service import TrashService
 from src.modules.registry.service import CentralRegistryService
@@ -110,7 +111,7 @@ class ItemService:
         user_id = current_user.get("_id") or current_user.get("id")
 
         # Privilege Check: Only super_admin, admin, manager can create items
-        if role not in ["super_admin", "admin", "manager"]:
+        if not await check_user_permission(current_user, "inventory", "create", self.db):
             raise PermissionException("Unauthorized: You do not have permissions to register new catalog items.")
 
         # Non-super_admins can only register items to their assigned warehouse
@@ -191,7 +192,7 @@ class ItemService:
         user_id = current_user.get("_id") or current_user.get("id")
 
         # Privilege Check: Only super_admin, admin, manager can update items
-        if role not in ["super_admin", "admin", "manager"]:
+        if not await check_user_permission(current_user, "inventory", "edit", self.db):
             raise PermissionException("Unauthorized: You do not have permissions to modify inventory entries.")
 
         item = await self.repository.find_by_id(item_id, tenant_id)
@@ -271,7 +272,7 @@ class ItemService:
         user_id = current_user.get("_id") or current_user.get("id")
 
         # Privilege Check: Only super_admin, admin, manager can delete items
-        if role not in ["super_admin", "admin", "manager"]:
+        if not await check_user_permission(current_user, "inventory", "delete", self.db):
             raise PermissionException("Unauthorized: You do not have permissions to delete catalog items.")
 
         item = await self.repository.find_by_id(item_id, tenant_id)
@@ -345,7 +346,7 @@ class ItemService:
                 "total_items": {"$sum": 1},
                 "total_stock": {"$sum": "$stock"},
                 "total_valuation": {"$sum": {"$multiply": ["$price", "$stock"]}},
-                "low_stock": {"$sum": {"$cond": [{"$lt": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, 1, 0]}},
+                "low_stock": {"$sum": {"$cond": [{"$lte": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, 1, 0]}},
                 "out_of_stock": {"$sum": {"$cond": [{"$eq": ["$stock", 0]}, 1, 0]}}
             }}
         ]
@@ -424,7 +425,7 @@ class ItemService:
                     "$cond": [
                         {"$eq": ["$stock", 0]},
                         "out_of_stock",
-                        {"$cond": [{"$lt": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, "low_stock", "in_stock"]}
+                        {"$cond": [{"$lte": ["$stock", {"$ifNull": ["$low_stock_threshold", 20]}]}, "low_stock", "in_stock"]}
                     ]
                 }
             }},
@@ -493,7 +494,10 @@ class ItemService:
         tenant_id = current_user["tenant_id"]
         user_id = current_user.get("_id") or current_user.get("id")
 
-        if role not in ["super_admin", "admin", "manager"]:
+        if payload.quantity > 50:
+            raise ValidationException("Cannot generate more than 50 barcodes in a single batch.")
+
+        if not await check_user_permission(current_user, "inventory", "manage", self.db):
             raise PermissionException("Unauthorized to generate barcodes.")
 
         item = None
@@ -530,7 +534,7 @@ class ItemService:
             new_stock = item["stock"] + payload.quantity
 
             updated = await self.repository.update_item(
-                item["id"],
+                str(item["_id"]),
                 tenant_id,
                 {
                     "stock": new_stock,
@@ -577,7 +581,7 @@ class ItemService:
             new_barcodes = existing_barcodes + generated_barcodes
             
             updated = await self.repository.update_item(
-                new_item["id"],
+                str(new_item["_id"]),
                 tenant_id,
                 {
                     "stock": payload.quantity,

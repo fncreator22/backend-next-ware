@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, status, Body
-from src.modules.auth.dependencies import get_current_user, RequireRole
+from src.modules.auth.dependencies import get_current_user, RequirePermission
 from src.modules.auth.schema import RoleCreate, RoleUpdate
 from src.database import get_db
 from src.middleware.exceptions import PermissionException, NotFoundException
@@ -32,7 +32,7 @@ async def list_roles(
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=dict)
 async def create_custom_role(
     payload: RoleCreate,
-    current_user: dict = Depends(RequireRole(["super_admin"])),
+    current_user: dict = Depends(RequirePermission("settings", "manage")),
     db = Depends(get_db)
 ):
     """Create a new custom role template."""
@@ -66,7 +66,7 @@ async def create_custom_role(
 async def update_custom_role(
     role_id: str,
     payload: RoleUpdate,
-    current_user: dict = Depends(RequireRole(["super_admin"])),
+    current_user: dict = Depends(RequirePermission("settings", "manage")),
     db = Depends(get_db)
 ):
     """Update custom role configuration details and permission matrices."""
@@ -93,7 +93,7 @@ async def update_custom_role(
 @router.delete("/{role_id}", response_model=dict)
 async def delete_custom_role(
     role_id: str,
-    current_user: dict = Depends(RequireRole(["super_admin"])),
+    current_user: dict = Depends(RequirePermission("settings", "manage")),
     db = Depends(get_db)
 ):
     """Delete a custom role configuration from database."""

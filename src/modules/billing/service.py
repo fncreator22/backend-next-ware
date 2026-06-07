@@ -12,6 +12,7 @@ from src.modules.warehouses.repository import WarehouseRepository
 from src.modules.items.repository import ItemRepository
 from src.middleware.exceptions import PermissionException, NotFoundException, ValidationException
 from src.database import get_db
+from src.modules.auth.dependencies import check_user_permission
 from src.modules.audit_logs.service import AuditLogService
 from src.modules.trash.service import TrashService
 from src.modules.registry.service import CentralRegistryService, CustomerService
@@ -55,7 +56,7 @@ class BillingService:
         user_id = str(current_user.get("_id") or current_user.get("id"))
 
         # Privilege Check: super_admin, admin, manager, staff are allowed to bill
-        if role not in ["super_admin", "admin", "manager", "staff"]:
+        if not await check_user_permission(current_user, "billing", "create", self.db):
             raise PermissionException("Unauthorized: You do not have billing permissions.")
 
         # Scoping Check: Non-super_admins can only generate bills for their assigned warehouse
@@ -153,6 +154,8 @@ class BillingService:
                             "total": engine_res["total"],
                             "tax_config_snapshot": tax_snapshot,
                             "tax_details": engine_res["tax_details"],
+                            "currency": payload.currency,
+                            "exchange_rate": payload.exchange_rate,
                             "created_by": user_id,
                             "created_at": datetime.utcnow(),
                             # Seller info
@@ -294,6 +297,8 @@ class BillingService:
                     "total": engine_res["total"],
                     "tax_config_snapshot": tax_snapshot,
                     "tax_details": engine_res["tax_details"],
+                    "currency": payload.currency,
+                    "exchange_rate": payload.exchange_rate,
                     "created_by": user_id,
                     "created_at": datetime.utcnow(),
                     # Seller info
@@ -388,6 +393,8 @@ class BillingService:
         limit: int = 10
     ) -> dict:
         """List active invoices scoped according to role privilege hierarchies."""
+        if not await check_user_permission(current_user, "billing", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view invoices.")
         tenant_id = current_user["tenant_id"]
         role = current_user["role"]
 
@@ -438,6 +445,8 @@ class BillingService:
 
     async def get_invoice_detail(self, bill_id: str, current_user: dict) -> dict:
         """Query individual invoice details asserting scoping restrictions."""
+        if not await check_user_permission(current_user, "billing", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view invoice details.")
         tenant_id = current_user["tenant_id"]
         role = current_user["role"]
 
@@ -453,6 +462,8 @@ class BillingService:
 
     async def get_analytics_revenue(self, current_user: dict, warehouse_id: str = None) -> dict:
         """Compute aggregated revenue, tax, net earnings, and average invoicing size."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view billing analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user["role"]
 
@@ -500,6 +511,8 @@ class BillingService:
 
     async def get_analytics_trends(self, current_user: dict, warehouse_id: str = None) -> list[dict]:
         """Aggregate monthly gross and tax trends for drawing charts."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view revenue analytics trends.")
         tenant_id = current_user["tenant_id"]
         role = current_user["role"]
 
@@ -540,6 +553,8 @@ class BillingService:
 
     async def get_analytics_top_items(self, current_user: dict, warehouse_id: str = None) -> list[dict]:
         """Aggregate sales quantities grouped by item name to define bestselling items."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view bestseller analytics.")
         tenant_id = current_user["tenant_id"]
         role = current_user["role"]
 
@@ -575,6 +590,8 @@ class BillingService:
 
     async def get_analytics_warehouse_performance(self, current_user: dict) -> list[dict]:
         """Super Admin aggregation showing revenue and invoice stats grouped per warehouse."""
+        if not await check_user_permission(current_user, "reports", "view", self.db):
+            raise PermissionException("Unauthorized: You do not have permission to view performance reports.")
         if current_user["role"] != "super_admin":
             raise PermissionException("Unauthorized: Only Super Admins can aggregate warehouse performance indexes.")
 
@@ -617,7 +634,7 @@ class BillingService:
         user_id = str(current_user.get("_id") or current_user.get("id"))
 
         # Privilege Check: Only super_admin and admin can delete invoices
-        if role not in ["super_admin", "admin"]:
+        if not await check_user_permission(current_user, "billing", "delete", self.db):
             raise PermissionException("Unauthorized: Only Super Admins and Admins can delete invoices.")
 
         bill = await self.repository.find_by_id(invoice_id, tenant_id)

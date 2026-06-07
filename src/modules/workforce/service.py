@@ -11,6 +11,7 @@ from src.utils.email import send_invitation_email
 from src.modules.audit_logs.service import AuditLogService
 from src.modules.trash.service import TrashService
 from src.modules.registry.service import CentralRegistryService
+from src.modules.auth.dependencies import check_user_permission
 
 logger = logging.getLogger("wareops_erp.modules.workforce.service")
 
@@ -72,8 +73,9 @@ class WorkforceService:
         user_id = current_user.get("_id") or current_user.get("id")
 
         # 1. Scoping Privilege Checks
-        if role not in ["super_admin", "admin"]:
-            raise PermissionException("Unauthorized: Only Super Admins and Admins can register new workforce members.")
+        has_create_perm = await check_user_permission(current_user, "workforce", "create", self.db)
+        if not has_create_perm:
+            raise PermissionException("Unauthorized: You do not have permission to register new workforce members.")
 
         if role != "super_admin":
             # Cannot create users with higher or peer roles
@@ -199,6 +201,10 @@ class WorkforceService:
         target_id = target.get("_id") or target.get("id")
 
         # 1. Scoping updates by privilege levels
+        has_edit_perm = await check_user_permission(current_user, "workforce", "edit", self.db)
+        if not has_edit_perm and user_id != target_id:
+            raise PermissionException("Unauthorized: You do not have permission to update workforce members.")
+
         if role != "super_admin":
             if user_id == target_id:
                 # Can edit self, but cannot escalate own privileges or change own warehouse
@@ -289,6 +295,10 @@ class WorkforceService:
         target_level = ROLE_LEVELS.get(target["role"], 1)
 
         # 1. Scoping deletions checks
+        has_delete_perm = await check_user_permission(current_user, "workforce", "delete", self.db)
+        if not has_delete_perm:
+            raise PermissionException("Unauthorized: You do not have permission to remove workforce members.")
+
         if role != "super_admin":
             # Cannot delete superiors or peers
             if target_level >= my_level:
@@ -337,3 +347,111 @@ class WorkforceService:
             ))
         except Exception as e:
             logger.debug(f"Manual WebSocket broadcast failed for workforce deletion: {e}")
+
+    async def get_pending_documents(self, current_user: dict) -> list[dict]:
+        """Fetch all pending documents across workforce profiles inside a tenant space."""
+        has_view_perm = await check_user_permission(current_user, "workforce", "view", self.db)
+        if not has_view_perm:
+            raise PermissionException("Unauthorized: You do not have permission to view workforce documents.")
+
+        tenant_id = current_user["tenant_id"]
+        cursor = self.db.users.find({
+            "tenant_id": tenant_id,
+            "profile.documents": {"$exists": True}
+        })
+        
+        pending_list = []
+        async for user in cursor:
+            docs = user.get("profile", {}).get("documents", [])
+            for doc in docs:
+                if doc.get("status") == "Pending Review":
+                    pending_list.append({
+                        "userId": str(user["_id"]),
+                        "userName": user["name"],
+                        "userEmail": user["email"],
+                        "id": doc.get("id"),
+                        "name": doc.get("name"),
+                        "type": doc.get("type", "Unknown"),
+                        "expiryDate": doc.get("expiryDate") or doc.get("expiry_date"),
+                        "uploadedAt": doc.get("uploadedAt") or doc.get("uploaded_at"),
+                        "status": doc.get("status")
+                    })
+        return pending_list
+
+    async def review_document(self, doc_id: str, payload: dict, current_user: dict) -> dict:
+        """Approve or reject a compliance document, logging the action and broadcasting sync notifications."""
+        has_edit_perm = await check_user_permission(current_user, "workforce", "edit", self.db)
+        if not has_edit_perm:
+            raise PermissionException("Unauthorized: You do not have permission to review workforce documents.")
+
+        tenant_id = current_user["tenant_id"]
+        
+        user = await self.db.users.find_one({
+            "tenant_id": tenant_id,
+            "profile.documents.id": doc_id
+        })
+        if not user:
+            raise NotFoundException("Document not found.")
+
+        docs = user.get("profile", {}).get("documents", [])
+        target_doc = None
+        for doc in docs:
+            if doc.get("id") == doc_id:
+                doc["status"] = payload.get("status")
+                doc["reviewerId"] = str(current_user["_id"])
+                doc["reviewerName"] = current_user["name"]
+                doc["remarks"] = payload.get("remarks") or ""
+                doc["reviewedAt"] = datetime.utcnow().isoformat().split('T')[0]
+                target_doc = doc
+                break
+
+        if not target_doc:
+            raise NotFoundException("Document not found inside profile.")
+
+        await self.db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"profile.documents": docs}}
+        )
+
+        await self.audit.log_event(
+            user_id=str(current_user["_id"]),
+            user_name=current_user["name"],
+            action="document_review",
+            description=f"Document '{target_doc['name']}' ({target_doc['type']}) for '{user['name']}' was {payload.get('status').lower()}.",
+            tenant_id=tenant_id
+        )
+
+        try:
+            from src.modules.realtime import ws_manager, normalize_doc
+            import asyncio
+            
+            notif_payload = {
+                "id": "notif_" + str(ObjectId()),
+                "title": f"Document {payload.get('status')}",
+                "message": f"Your document '{target_doc['name']}' has been {payload.get('status').lower()} by {current_user['name']}.",
+                "type": "info" if payload.get('status') == "Approved" else "warning",
+                "timestamp": datetime.utcnow().isoformat(),
+                "read": False
+            }
+            
+            await self.db.users.update_one(
+                {"_id": user["_id"]},
+                {"$push": {"notifications": notif_payload}}
+            )
+
+            asyncio.create_task(ws_manager.broadcast_event(
+                tenant_id=tenant_id,
+                event_type="workforce_activity",
+                data={"userId": str(user["_id"]), "documentId": doc_id, "status": payload.get("status")},
+                warehouse_id=user.get("warehouse_id")
+            ))
+            
+            asyncio.create_task(ws_manager.send_to_user(
+                user_id=str(user["_id"]),
+                event_type="notification",
+                data=notif_payload
+            ))
+        except Exception as e:
+            logger.debug(f"Failed to dispatch real-time ws notification: {e}")
+
+        return target_doc

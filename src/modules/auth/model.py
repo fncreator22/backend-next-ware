@@ -19,6 +19,9 @@ class UserDocument(BaseModel):
     warehouse_overrides: Optional[list[str]] = None
     module_overrides: Optional[list[str]] = None
     employee_id: Optional[str] = None
+    failed_login_attempts: int = 0
+    lockout_until: Optional[datetime] = None
+    profile: Optional[dict] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

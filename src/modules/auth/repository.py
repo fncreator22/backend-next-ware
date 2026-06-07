@@ -60,3 +60,8 @@ class UserRepository:
         """Invalidate all session keys active for a specific user profile (e.g. password resets)."""
         logger.info(f"Revoking all active sessions for user ID: '{user_id}'")
         await self.sessions.update_many({"user_id": user_id}, {"$set": {"is_revoked": True}})
+
+    async def update_user(self, user_id: str, update_fields: dict) -> None:
+        """Update specific fields of a user document."""
+        logger.info(f"Updating user: '{user_id}' with fields: {list(update_fields.keys())}")
+        await self.users.update_one({"_id": user_id}, {"$set": update_fields})

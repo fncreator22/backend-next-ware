@@ -47,7 +47,10 @@ async def test_hierarchy():
         "email": "manager@test.com",
         "role": "manager",
         "tenant_id": tenant_id,
-        "warehouse_id": wh_id
+        "warehouse_id": wh_id,
+        "permission_overrides": {
+            "audit": {"view": True}
+        }
     }
     
     staff_user = {
@@ -56,7 +59,10 @@ async def test_hierarchy():
         "email": "staff@test.com",
         "role": "staff",
         "tenant_id": tenant_id,
-        "warehouse_id": wh_id
+        "warehouse_id": wh_id,
+        "permission_overrides": {
+            "audit": {"view": True}
+        }
     }
     
     other_staff_user = {

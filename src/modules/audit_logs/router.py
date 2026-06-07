@@ -14,6 +14,7 @@ async def list_audit_logs(
     limit: int = Query(100, ge=1, le=100),
     search: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
+    scope: str = Query("enterprise"),
     current_user: dict = Depends(get_current_user),
     service: AuditLogService = Depends()
 ):
@@ -24,7 +25,8 @@ async def list_audit_logs(
         page=page,
         limit=limit,
         search=search,
-        action=action
+        action=action,
+        scope=scope
     )
     serialized = [AuditLogResponse.from_doc(l).model_dump(by_alias=True) for l in res["logs"]]
     return {
